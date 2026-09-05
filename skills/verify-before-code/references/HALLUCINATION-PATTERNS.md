@@ -145,7 +145,7 @@ invented non-existent package names in ~5.2% (commercial) to ~21.7%
 (open-source) of outputs — 205,474 unique names; ~58% recur across runs.
 Predictable names let attackers pre-register the exact package with malware
 ("slopsquatting"). Signal: an import whose package is not stdlib and not in
-the project's known set. Mitigation: `check_imports`.
+the project's known set. Mitigation: `check_imports`, including the dependency-manifest mode (`guard_cli imports --manifest`, MCP `manifest` arg) diff-scoped against git HEAD — only NEWLY ADDED names are suspects, so pre-existing long-tail dependencies never drown the report.
 
 **5.2 Code-hallucination taxonomy** (arXiv:2504.20799): four observable
 categories — syntactic (breaks grammar), runtime (fails when run), functional
@@ -164,3 +164,5 @@ encode the required/prohibited surface instead.
 AI assistant wrote measurably LESS secure code while becoming MORE confident.
 Gate implication: confidence is not evidence — require runs, exit codes, and
 file:line citations (Gates 3–4).
+
+**5.5 Phantom domains / slopsquatting for URLs** (Unit 42): the same pre-registration attack applied to hallucinated web domains — the model cites docs/API endpoints on domains that were never real, attackers register them. Signal (lexical, honest boundary): placeholder stand-ins (`api.yourdomain.com`), reserved TLDs used as if real (`myapp.test`), and "example" fabricated into non-reserved domains; a plausible-looking fake domain is only decidable with a registry check (network). Mitigation: the `fabricated_url` scan group; treat every new external URL in generated code as unverified.

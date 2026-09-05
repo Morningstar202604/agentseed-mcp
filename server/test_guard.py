@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import unittest
+from pathlib import Path
 
 import guard_engine as engine  # noqa: E402
 
@@ -666,8 +667,10 @@ class TestConformance(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             skill_dir = os.path.join(d, "skills", "demo-skill")
             os.makedirs(skill_dir)
-            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as fh:
-                fh.write("---\nname: demo-skill\ndescription: ok\n---\n\n---\nnot frontmatter\n")
+            Path(skill_dir, "SKILL.md").write_text(
+                "---\nname: demo-skill\ndescription: ok\n---\n\n---\nnot frontmatter\n",
+                encoding="utf-8",
+            )
             # body containing a '---' line must not corrupt the parse
             r = engine.check_plugin_conformance(d)
             self.assertEqual([e for e in r["errors"] if "demo-skill" in e], [], r["errors"])
@@ -676,21 +679,19 @@ class TestConformance(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "plugin.json"), "w", encoding="utf-8") as fh:
-                fh.write(
-                    '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",'
-                    '"name":"badplugin","repository":{"type":"git","url":"x"}}'
-                )
+            Path(d, "plugin.json").write_text(
+                '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",'
+                '"name":"badplugin","repository":{"type":"git","url":"x"}}',
+                encoding="utf-8",
+            )
             r = engine.check_plugin_conformance(d)
             self.assertFalse(r["ok"])
             self.assertTrue(any("repository" in e for e in r["errors"]))
 
     @staticmethod
     def _write_plugin(tmp, plugin_json, mcp_json):
-        with open(os.path.join(tmp, "plugin.json"), "w", encoding="utf-8") as fh:
-            fh.write(plugin_json)
-        with open(os.path.join(tmp, "mcp.json"), "w", encoding="utf-8") as fh:
-            fh.write(mcp_json)
+        Path(tmp, "plugin.json").write_text(plugin_json, encoding="utf-8")
+        Path(tmp, "mcp.json").write_text(mcp_json, encoding="utf-8")
 
     PJ = '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"t"}'
     MJ = (

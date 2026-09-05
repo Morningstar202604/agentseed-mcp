@@ -44,7 +44,7 @@ Apply full rigor to Critical/High; lighter checks to Medium/Low.
 - [ ] Claims that require running code were proven via `sandbox_run`.
 - [ ] Structured outputs passed `schema_validate`.
 - [ ] `verify_code` → `suspects` empty.
-- [ ] `scan_hallucination` → `clean: true` (no stub/oversold/fabricated hits).
+- [ ] `scan_hallucination` → `clean: true` (no stub/oversold/fabricated/fabricated_url hits).
 
 ## Phase 4 — Language audit (final answer)
 

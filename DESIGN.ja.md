@@ -77,10 +77,11 @@ AgentSeed は「**コードレベル + 実ツール実行 + Skill/MCP クロー�
 | ツール | 説明 |
 | --- | --- |
 | `verify_code` | 未定義/未インポートシンボルの静的検出（Python は AST、他は語彙パス） |
+| `resolve_symbol` | 呼び出す前のシンボル存在判定（プロジェクト記号インデックス + stdlib/既知パッケージ、書き込み前予防） |
 | `verify_file` | ディスク上のファイルを最適なエンジンで検証（ruff/pyflakes/mypy/tsc/eslint/go vet/cargo/javac、§10.1） |
 | `check_contract` | 書かれた契約（requires/prohibits）に対してソースを検証 |
 | `check_imports` | stdlib と `known_packages` に無いトップレベル import を報告（slopsquatting ガード） |
-| `scan_hallucination` | 3 グループ幻覚シグナルスキャン（stub_code/oversold/fabricated） |
+| `scan_hallucination` | 4 グループ幻覚シグナルスキャン（stub_code/oversold/fabricated/fabricated_url） |
 | `check_plugin` | Agent Plugins 1.0.0 適合性 linter |
 | `sandbox_run` | 決定的実行チャネル（サブプロセス・タイムアウト付き） |
 | `schema_validate` | JSON Schema サブセット検証（ゼロ依存） |

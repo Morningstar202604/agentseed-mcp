@@ -1,6 +1,7 @@
 """AgentSeed CLI tests (stdlib unittest, run the CLI as a subprocess)."""
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
@@ -146,8 +147,7 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "mod.py")
             base = os.path.join(d, "baseline.json")
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("# fine\nx = 1\n")
+            Path(src).write_text("# fine\nx = 1\n", encoding="utf-8")
             r = run_cli("scan", d, "--baseline", base)  # no baseline yet -> creates
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue(os.path.isfile(base))
@@ -172,12 +172,10 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "doc.md")
             base = os.path.join(d, "baseline.json")
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("production ready claim lives here\n")
+            Path(src).write_text("production ready claim lives here\n", encoding="utf-8")
             run_cli("scan", d, "--baseline", base)
             # moving the SAME hit to another line must stay green (line-free fp)
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("\n\n\nproduction ready claim lives here\n")
+            Path(src).write_text("\n\n\nproduction ready claim lives here\n", encoding="utf-8")
             r = run_cli("scan", d, "--baseline", base)
             self.assertEqual(r.returncode, 0, r.stdout)
 
@@ -186,15 +184,13 @@ class TestCli(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             req = os.path.join(d, "requirements.txt")
-            with open(req, "w", encoding="utf-8") as fh:
-                fh.write("numpy==1.26.0\nphantom-req-pkg>=1.0\n")
+            Path(req).write_text("numpy==1.26.0\nphantom-req-pkg>=1.0\n", encoding="utf-8")
             r = run_cli("imports", "--manifest", req)
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("phantom-req-pkg", r.stdout)
             self.assertIn('"kind": "requirements"', r.stdout)
             # clean manifest exits 0
-            with open(req, "w", encoding="utf-8") as fh:
-                fh.write("numpy==1.26.0\nrequests>=2.0\n")
+            Path(req).write_text("numpy==1.26.0\nrequests>=2.0\n", encoding="utf-8")
             r = run_cli("imports", "--manifest", req)
             self.assertEqual(r.returncode, 0, r.stdout)
 
@@ -209,8 +205,7 @@ class TestCli(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, timeout=60)
-            with open(os.path.join(d, "a.py"), "w", encoding="utf-8") as fh:
-                fh.write("x = 1\n")
+            Path(d, "a.py").write_text("x = 1\n", encoding="utf-8")
             # default: the gap is reported without failing
             r = run_cli("gate", "--root", d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -235,8 +230,7 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "mod.py")
             base = os.path.join(d, "baseline.json")
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("# TODO: later\nall tests pass, guaranteed\n")
+            Path(src).write_text("# TODO: later\nall tests pass, guaranteed\n", encoding="utf-8")
             run_cli("scan", src, "--baseline", base)  # freeze 2 hits
             r = run_cli("baseline", "audit", base)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -263,8 +257,9 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, timeout=60)
             req = os.path.join(d, "requirements.txt")
-            with open(req, "w", encoding="utf-8") as fh:
-                fh.write("numpy==1.26.0\npytest-cov==5.0\n")  # pytest-cov: unknown but pre-existing
+            Path(req).write_text(  # pytest-cov: unknown but pre-existing
+                "numpy==1.26.0\npytest-cov==5.0\n", encoding="utf-8"
+            )
             env_git = subprocess.run(
                 ["git", "-C", d, "add", "requirements.txt"], capture_output=True, timeout=60
             )

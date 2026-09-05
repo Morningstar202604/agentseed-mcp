@@ -42,7 +42,7 @@ Critical/High は全検査、Medium/Low は軽量チェック。
 - [ ] 実行を伴う主張は `sandbox_run` で実証した。
 - [ ] 構造化出力は `schema_validate` で検証した。
 - [ ] `verify_code` → `suspects` 空。
-- [ ] `scan_hallucination` → `clean: true`。
+- [ ] `scan_hallucination` → `clean: true`（stub/誇張/捏造/幻覚ドメインなし）。
 
 ## フェーズ 4 — 言語監査（最終回答）
 
