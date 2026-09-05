@@ -9,3 +9,7 @@ __pycache__/
 dist/
 .agentseed/
 .workbuddy/
+
+# local gate artifacts (never commit)
+baseline-scan.json
+.mimosa/
