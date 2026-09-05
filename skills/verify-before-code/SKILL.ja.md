@@ -38,6 +38,8 @@ AgentSeed ガードレール保護下のセッションにいます。`agentseed
 - コーディング対象の契約を 1 文で述べる。
 - 契約として表現できないタスクなら、立ち止まって確認する。
 - 出力リスクを分類する（Critical / High / Medium / Low）。Critical/High は全検査。
+- 契約を機械検証できる形にできるなら、`check_contract(source, contract)`
+  （requires/prohibits）としてエンコードし、ゲート 3 で他のツールと一緒に実行する。
 
 ## ゲート 2 — 契約に沿った実装
 
@@ -47,6 +49,8 @@ AgentSeed ガードレール保護下のセッションにいます。`agentseed
 - `stub`/`mock`/`fake`/`placeholder`/`dummy`/`todo`/`fixme`/`tbd`/
   `not implemented`/`coming soon` を実ロジックの代わりに**使わない**。
 - このプロジェクトで定義・インポートされていないシンボルを**呼ばない** — 書く前に `resolve_symbol(names=[...])` で存在を確認する。
+- 名前を確認せずに依存を**追加しない**：`check_imports(source, manifest=...)` が
+  架空パッケージ（slopsquatting）をロックファイルに入る前に検出する。
 - インストール済みバージョンで検証していない API を**信頼しない**（PROMPT-POOL E1）。
 - 今ターンで読んでいないファイルの内容・行番号を**断言しない**（PROMPT-POOL F1）。
 
@@ -95,6 +99,14 @@ python <agentseedプラグインルート>/server/guard_cli.py scan  "<最終ソ
 タスク完了と絶対にマークしないでください。解消できない場合は成功を主張せず、
 ユーザーに明示的に報告します。
 
+実行と構造も「観測可能な事実」で検証します——主張ではなく：
+
+- 実行が必要な主張（テスト合格、型チェック、リンタ）→ `sandbox_run([...])` に
+  `expected_exit` / `expect_output` を付けて実証——「コマンドが走った」を
+  「期待どおりの結果が出た」に引き上げる。終了コードと出力を引用。
+- 構造化出力（JSON、設定）→ `schema_validate(instance, schema)` で検証。
+  自己評価の「正当だ」を信じない。
+
 ## ゲート 4 — 最終メッセージ前の言語監査
 
 ゲートが通過しても言語監査を実行します（PROMPT-POOL C/D/G/J）：
@@ -106,7 +118,9 @@ python <agentseedプラグインルート>/server/guard_cli.py scan  "<最終ソ
 - 完了報告には証拠（実行コマンド、出力、読んだファイル）を添付。重要な
   タスクではレシートを引用：`guard_cli receipt <タスク> --check
   verify_code=pass --file <変更ファイル>` がチェックとファイルハッシュを
-  検証可能な成果物として固定する。"Done, all
+  検証可能な成果物として固定する。MCP セッションでは等価の
+  `record_verification(task, checks, files)` を——gate のカバレッジ段はこの
+  ファイル記録を参照し、変更済み未検証ファイルを名指しする。"Done, all
   tests pass" にログが無ければ、それは主張であり結果ではない。
 
 ## 任意 — プラグイン自身の検証

@@ -44,6 +44,9 @@ ask the user to supply it first.
 - If the task cannot be expressed as a contract, stop and clarify.
 - Classify output risk (Critical / High / Medium / Low) per the checklist —
   full rigor for Critical/High.
+- When the contract is machine-checkable, encode it for
+  `check_contract(source, contract)` (`requires`/`prohibits`) and run it in
+  Gate 3 alongside the other tools.
 
 ## Gate 2 — Implement against the contract
 
@@ -53,6 +56,9 @@ implementations over placeholders.
 - **Never** emit `stub`/`mock`/`fake`/`placeholder`/`dummy`/`todo`/`fixme`/
   `tbd`/`not implemented`/`coming soon` as a substitute for working logic.
 - **Never** call a symbol that is not defined or imported in this project — before writing the call, ask `resolve_symbol(names=[...])` whether it exists.
+- **Never** add a dependency without checking the name first:
+  `check_imports(source, manifest=...)` flags invented packages
+  (slopsquatting) before they reach the lockfile.
 - **Never** trust an API that you have not verified against the installed
   version (see PROMPT-POOL E1 — "never invent an API").
 - **Never** assert a file's content or line numbers without reading it in this
@@ -112,8 +118,9 @@ Execution and structure are verified the same way — as observed facts, not
 claims:
 
 - Claims that require running code (tests pass, type check clean, linter ok)
-  → prove them with `sandbox_run(["python3", "-m", "pytest", ...])` and cite
-  the exit code + output.
+  → prove them with `sandbox_run([...])` plus `expected_exit` and
+  `expect_output` — "the command ran" must become "it produced the expected
+  result". Cite the exit code + output.
 - Structured outputs (JSON, config) → validate with
   `schema_validate(instance, schema)` before use. Never trust "it's valid" on
   self-assessment.
@@ -130,7 +137,10 @@ Even when the gates pass, run the language audit (PROMPT-POOL C/D/G/J):
   file read. "Done, all tests pass" without the log is a claim, not a result.
 - For non-trivial tasks, cite a receipt: `guard_cli receipt <task> --check
   verify_code=pass --file <changed file>` freezes the checks and file hashes
-  into a digest-linked artifact the user can re-verify.
+  into a digest-linked artifact the user can re-verify. In MCP sessions,
+  `record_verification(task, checks, files)` is the equivalent — the gate's
+  coverage stage reads those file records to name changed-but-unverified
+  files.
 
 ## Optional — Validate the plugin itself
 

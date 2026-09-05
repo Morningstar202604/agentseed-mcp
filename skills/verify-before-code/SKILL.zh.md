@@ -37,6 +37,8 @@ metadata:
 - 用一句话说明你正在按哪份契约编码。
 - 若任务无法表达为契约，停下来澄清。
 - 按清单给输出定级（关键/高/中/低）——关键与高风险走全套检查。
+- 契约可机器校验时，用 `check_contract(source, contract)`
+  （requires/prohibits）编码，并在闸门 3 与其他工具一并运行。
 
 ## 闸门 2 —— 按契约实现
 
@@ -45,6 +47,8 @@ metadata:
 - **绝不**用 `stub`/`mock`/`fake`/`placeholder`/`dummy`/`todo`/`fixme`/
   `tbd`/`not implemented`/`coming soon` 充当可运行逻辑。
 - **绝不**调用本项目内未定义或未导入的符号——落笔之前，先用 `resolve_symbol(names=[...])` 预查该符号是否存在。
+- **绝不**在未核实包名的情况下添加依赖：`check_imports(source, manifest=...)`
+  会在编造的包进入锁文件前标记它（slopsquatting）。
 - **绝不**相信未经"已安装版本"验证的 API（见提示池 E1 —— "绝不编造 API"）。
 - **绝不**不读文件就断言其内容或行号（见提示池 F1）。
 
@@ -93,7 +97,8 @@ python <agentseed插件根>/server/guard_cli.py scan  "<最终源码或文件>"
 执行与结构同样用"可观测事实"来验证，而不是靠声称：
 
 - 需要运行代码的声明（测试通过、类型检查干净、linter 通过）→ 用
-  `sandbox_run(["python3", "-m", "pytest", ...])` 实证，并引用退出码 + 输出。
+  `sandbox_run([...])` 加 `expected_exit` / `expect_output` 实证——"命令跑了"
+  必须升级为"跑出了预期结果"。引用退出码 + 输出。
 - 结构化输出（JSON、配置）→ 使用前用 `schema_validate(instance, schema)` 校验。
   绝不靠自我评估相信"它是合法的"。
 
@@ -107,7 +112,9 @@ python <agentseed插件根>/server/guard_cli.py scan  "<最终源码或文件>"
 - 不确定性被如实表达；引用与统计数字真实。
 - 完成报告必须附证据：跑过的命令、输出、读过的文件。重要任务请引用凭据：
   `guard_cli receipt <任务> --check verify_code=pass --file <改动文件>` 把
-  检查项与文件哈希冻结成可复核的工件。"Done, all tests pass"
+  检查项与文件哈希冻结成可复核的工件。MCP 会话用等价的
+  `record_verification(task, checks, files)`——gate 的覆盖率阶段读取这些
+  文件记录来点名"改了却未验证"的文件。"Done, all tests pass"
   却没有日志，只是声明，不是结果。
 
 ## 可选 —— 校验插件自身
