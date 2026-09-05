@@ -119,7 +119,17 @@ bash install.sh --client auto --hooks        # macOS / Linux
 # --hooks / -Hooks: also register the Claude Code enforcement hook
 ```
 
-**Option B — clone:**
+**Option B — npm:**
+
+```bash
+npm install -g agentseed-mcp     # installs the agentseed-mcp launcher
+npx agentseed-mcp                # or run the stdio MCP server directly
+```
+
+Register `npx agentseed-mcp` as a stdio MCP server named `agentseed` in
+your client; the launcher picks the right Python interpreter per platform.
+
+**Option C — clone:**
 
 ```bash
 git clone https://github.com/Morningstar202604/AgentSeed.git

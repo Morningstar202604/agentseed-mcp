@@ -119,7 +119,17 @@ bash install.sh --client auto --hooks        # macOS / Linux
 # --hooks / -Hooks: Claude Code 強制 Hook も登録
 ```
 
-**B — クローン：**
+**B — npm：**
+
+```bash
+npm install -g agentseed-mcp     # agentseed-mcp ランチャーをインストール
+npx agentseed-mcp                # または stdio MCP サーバーを直接実行
+```
+
+クライアントで `npx agentseed-mcp` を `agentseed` という名前の stdio MCP
+サーバーとして登録；ランチャーがプラットフォームに合った Python を選ぶ。
+
+**C — クローン：**
 
 ```bash
 git clone https://github.com/Morningstar202604/AgentSeed.git

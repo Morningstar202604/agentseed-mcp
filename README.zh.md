@@ -114,7 +114,17 @@ bash install.sh --client auto --hooks        # macOS / Linux
 # --hooks / -Hooks: 同时注册 Claude Code 强制 Hook
 ```
 
-**方案 B —— 克隆：**
+**方案 B —— npm：**
+
+```bash
+npm install -g agentseed-mcp     # 安装 agentseed-mcp 启动器
+npx agentseed-mcp                # 或直接运行 stdio MCP 服务器
+```
+
+在你的客户端里把 `npx agentseed-mcp` 注册为名为 `agentseed` 的 stdio MCP
+服务器；启动器会按平台自动选择正确的 Python 解释器。
+
+**方案 C —— 克隆：**
 
 ```bash
 git clone https://github.com/Morningstar202604/AgentSeed.git
