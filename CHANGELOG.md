@@ -3,6 +3,21 @@
 All notable changes to AgentSeed are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com); versioning follows [SemVer](https://semver.org).
 
+## [0.6.1] — 2026-09-06
+
+### Added
+- **Trilingual skill parity guard** (`server/test_skill_parity.py`): every
+  shipped MCP tool must be named in all three SKILL languages, gate structure
+  counts must agree, and the v0.6.0 capability tokens (expected_exit,
+  expect_output, manifest, record_verification) must be present everywhere.
+  This is the guard that would have caught the ja skill's missing
+  execution-evidence paragraph and the zero-mention tools before release.
+
+### Fixed
+- README.zh.md: removed a duplicated honesty-boundary line.
+- Installed-copy `mcp.json` command pinned to the real interpreter on
+  Windows (the shipped spec default `python3` does not exist there).
+
 ## [0.6.0] — 2026-09-05
 
 Hardening release: every addition closes a gap named in the 2025

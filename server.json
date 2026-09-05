@@ -3,7 +3,7 @@
   "name": "io.github.morningstar202604/agentseed-mcp",
   "title": "AgentSeed",
   "description": "Anti-hallucination guardrails for AI coding agents: hybrid Skill + MCP server that forces spec-driven development and verifies code (AST analysis, hallucination scan, sandboxed execution, schema validation) before it is marked done.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "repository": {
     "url": "https://github.com/Morningstar202604/AgentSeed"
   },
@@ -11,7 +11,7 @@
     {
       "registryType": "npm",
       "name": "agentseed-mcp",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "transport": {
         "type": "stdio"
       }
