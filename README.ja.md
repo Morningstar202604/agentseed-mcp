@@ -12,7 +12,7 @@ AI は存在しない API を捏造し、何も実行せずに「テスト全部
 「完了」にします。「完了」= **観測された事実**であり、自己申告ではありません。
 
 [![License](https://img.shields.io/badge/license-PolyForm_NC_1.0.0-purple)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
 [![CI](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml)
 [![MCP server score](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed/badges/score.svg)](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Morningstar202604/AgentSeed)
@@ -93,7 +93,9 @@ $ scan_hallucination(source=...)
 判定は**約束ではなく計測値**：シード固定の合成コーパス（5 欠陥クラス、
 欠陥 100 + クリーン 40 モジュール）で **precision 1.0 · recall 1.0**
 （tp=100, fp=0, fn=0）——回帰テストでロックイン済み。
-方法と正直な限界は [docs/BENCHMARK.md](./docs/BENCHMARK.md)。
+方法と正直な限界は [docs/BENCHMARK.md](./docs/BENCHMARK.md)。実リポジトリの検証証拠は
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。日々の使用ガイド
+（開始時の制約プロンプト、受け入れ、警告）は [docs/USAGE.md](./docs/USAGE.md)。
 
 ## ゲートの仕組み
 
@@ -161,6 +163,7 @@ python3 /path/to/AgentSeed/server/guard_cli.py init --root /your/project
 ```bash
 python3 server/guard_cli.py suppress legacy_helper    # verify がマークしなくなる（suppressed には残る）
 python3 server/guard_cli.py allow works-on-my-machine # scan が報告しなくなる（内蔵デフォルトの後に統合）
+python3 server/guard_cli.py baseline audit           # 凍結済みシグナルの監査とレビューLoop
 ```
 
 どちらもプロジェクトの `agentseed.config.json` を原子的に書き換え、パースに
@@ -186,7 +189,7 @@ python3 server/guard_cli.py scan . --baseline baseline-scan.json  # ツリー検
 > （配列は `args` 側）。`npx agentseed-mcp` は shim が OS から解釈器を選ぶため
 > 編集不要です。
 
-## 8 つの MCP ツール
+## 10 個の MCP ツール
 
 必須依存**ゼロ**——純 Python 標準ライブラリ。オプション拡張で 2 ツールが
 業界標準エンジンにアップグレードされます（下記）。
@@ -194,13 +197,14 @@ python3 server/guard_cli.py scan . --baseline baseline-scan.json  # ツリー検
 | ツール | ブロックするもの | 技術 |
 | --- | --- | --- |
 | `verify_code` | 捏造 API / 未定義シンボル | Python AST + 設定駆動の汎用語彙パス（17 言語） |
+| `resolve_symbol` | 呼び出す**前**に幻覚 API を予防 | プロジェクト記号インデックス + stdlib/既知パッケージ照会、類似候補提示 |
 | `check_contract` | 仕様に違反するコード | requires/prohibits 契約チェック |
-| `check_imports` | 幻覚パッケージ（slopsquatting） | stdlib + known_packages ホワイトリスト検証 |
-| `scan_hallucination` | プレースホルダー、誇張、捏造 | 3 グループ 28+ シグナル、EN + CJK |
+| `check_imports` | 幻覚パッケージ（slopsquatting） | stdlib + known_packages ホワイトリスト検証；`--manifest` は依存マニフェストをスキャンし git HEAD と比較——新規追加のみを疑う |
+| `scan_hallucination` | プレースホルダー、誇張、捏造、ファントムドメイン | 4 グループ 50+ シグナル、EN + CJK |
 | `check_plugin` | 不適合なプラグイン | 厳格 1.0.0 linter |
-| `sandbox_run` | 実行せずに「テスト合格」 | 決定的実行チャネル（メモリ有界出力） |
+| `sandbox_run` | 実行せずに「テスト合格」、実行したが結果が不一致 | 決定的実行チャネル + 振る舞いアサーション（expected_exit / expect_output） |
 | `schema_validate` | 不正な構造化出力 | JSON Schema 検証 |
-| `record_verification` | 証跡の永続化欠如 | `PLUGIN_DATA` 配下の JSONL 監査トレイル |
+| `record_verification` | 証跡の永続化欠如、未検証の変更ファイル | `PLUGIN_DATA` 配下の JSONL 監査トレイル；`files` エントリは gate のカバレッジ段で利用 |
 
 ### 言語カバレッジ（正直な範囲）
 
@@ -306,7 +310,7 @@ pip install -r server/requirements.txt
 | ホスト能力 | 得られるもの |
 | --- | --- |
 | フル Agent Plugins | ドロップイン：skill + MCP 自動発見、`${PLUGIN_DATA}` 設定尊重 |
-| MCP 対応クライアント | 登録で 9 ツールすべて |
+| MCP 対応クライアント | 登録で 10 ツールすべて |
 | skill のみのクライアント | skill ワークフロー；検証は `guard_cli.py` を shell 経由で実行 |
 | ターミナル / CI | 終了コード付き CLI ゲート |
 
@@ -324,8 +328,8 @@ pip install -r server/requirements.txt
 | | プロンプト専用 skill | 静的 import linter（MCP） | **AgentSeed** |
 | --- | --- | --- | --- |
 | コードに触れる | ❌ プロンプトのみ | ✅ import グラフ | ✅ AST + 語彙（17 言語） |
-| 検証ツールを実行 | ❌ | lint ゲート | ✅ 9 MCP ツール（sandbox 含む） |
-| 幻覚言語スキャン | ❌ | ❌ | ✅ stub/oversold/fabricated、EN + CJK |
+| 検証ツールを実行 | ❌ | lint ゲート | ✅ 10 MCP ツール（sandbox 含む） |
+| 幻覚言語スキャン | ❌ | ❌ | ✅ stub/oversold/fabricated/fabricated_url、EN + CJK |
 | 強制力 | 軟（skill 文面） | CI ゲート | **硬**：skill + MCP + hook + CLI 終了コード |
 | 1.0.0 適合 linter | ❌ | ❌ | ✅ 最初 |
 

@@ -41,7 +41,7 @@
 - [ ] 需要运行代码证实的声明已通过 `sandbox_run` 实证。
 - [ ] 结构化输出已通过 `schema_validate` 校验。
 - [ ] `verify_code` → `suspects` 为空。
-- [ ] `scan_hallucination` → `clean: true`（无 stub/夸大/虚构命中）。
+- [ ] `scan_hallucination` → `clean: true`（无 stub/夸大/虚构/幻觉域名命中）。
 
 ## 阶段 4 —— 语言审查（最终答复）
 

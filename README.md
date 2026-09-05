@@ -12,7 +12,7 @@ a zero-dependency plugin that verifies code *before* it is marked done, so
 "done" means *observed fact*, not self-report.
 
 [![License](https://img.shields.io/badge/license-PolyForm_NC_1.0.0-purple)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
 [![CI](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml)
 [![MCP server score](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed/badges/score.svg)](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Morningstar202604/AgentSeed)
@@ -92,7 +92,9 @@ The verdict is **measured, not promised**: on a seeded synthetic corpus
 (5 defect classes, 100 defective + 40 clean modules) AgentSeed scores
 **precision 1.0 · recall 1.0** (tp=100, fp=0, fn=0) — locked in by a
 regression test. Methodology and honest limits:
-[docs/BENCHMARK.md](./docs/BENCHMARK.md).
+[docs/BENCHMARK.md](./docs/BENCHMARK.md). Real-repo field evidence:
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md). Daily-usage guide (opening
+prompt, acceptance, warnings): [docs/USAGE.md](./docs/USAGE.md).
 
 ## How the gate works
 
@@ -166,7 +168,7 @@ python3 server/guard_cli.py plugin init my-plugin    # scaffold → validate →
 > belongs to `args`. `npx agentseed-mcp` needs no editing at all: the npm shim
 > picks the interpreter per platform.
 
-## The 9 MCP tools
+## The 10 MCP tools
 
 Zero *required* dependencies — pure Python standard library; optional extras
 upgrade two tools to industry-standard engines (see below).
@@ -174,14 +176,15 @@ upgrade two tools to industry-standard engines (see below).
 | Tool | Catches | Technique |
 | --- | --- | --- |
 | `verify_code` | Invented APIs / undefined symbols | Python AST + config-driven lexical passes (17 languages) |
-| `verify_file` | The same class, on real files | Runs the project's own toolchain (ruff, pyflakes, tsc, eslint, go vet, cargo check) when installed; built-in analyzer as fallback |
+| `resolve_symbol` | Hallucinated APIs BEFORE the call is written | Project symbol index + stdlib/known-package lookup with did-you-mean suggestions |
+| `verify_file` | The same class, on real files | Runs the project's own toolchain (ruff, pyflakes, mypy, tsc, eslint, go vet, cargo check, javac) when installed; built-in analyzer as fallback |
 | `check_contract` | Code violates a written spec | requires/prohibits contract check |
-| `check_imports` | Hallucinated packages (slopsquatting) | stdlib + known-packages allowlist check |
-| `scan_hallucination` | Placeholder code, overclaims, fabricated content | 28+ signals in 3 groups, EN + CJK |
+| `check_imports` | Hallucinated packages (slopsquatting) | stdlib + known-packages allowlist check; `--manifest` scans requirements/pyproject/package.json and diff-scopes against git HEAD — only NEWLY ADDED names are suspects |
+| `scan_hallucination` | Placeholder code, overclaims, fabricated content, phantom domains | 50+ signals in 4 groups, EN + CJK |
 | `check_plugin` | Non-conformant plugin packaging | Strict 1.0.0 linter |
-| `sandbox_run` | "Tests pass" without running anything | Deterministic execution channel (bounded-memory output) |
+| `sandbox_run` | "Tests pass" without running anything; ran but the result disagrees | Deterministic execution channel + behavioral assertions (expected_exit / expect_output) |
 | `schema_validate` | Invalid structured output | JSON Schema validation |
-| `record_verification` | No persistent evidence trail | JSONL audit trail under `PLUGIN_DATA` |
+| `record_verification` | No persistent evidence trail; changed-but-unverified files | JSONL audit trail under `PLUGIN_DATA`; `files` entries feed the gate coverage stage |
 
 ### Language coverage (honest scope)
 
@@ -219,6 +222,8 @@ python3 server/guard_cli.py verify src/app.py --engine builtin # force the built
 | `eslint` | JavaScript | `no-undef` rule |
 | `govet` | Go | `go vet` (`undefined:`) |
 | `cargo` | Rust | `cargo check --message-format json` (E0425) |
+| `mypy` | Python | `mypy --no-error-summary` (`[name-defined]`) |
+| `javac` | Java | `javac -d` (`cannot find symbol`, stderr) |
 
 `--engine auto` picks the first installed adapter and falls back to the
 built-in analyzer; an explicit `--engine <name>` fails loudly when missing.
@@ -245,6 +250,7 @@ A gate only survives if it gets quieter as you use it:
 ```bash
 python3 server/guard_cli.py suppress legacy_helper    # verify stops flagging it (still reported in 'suppressed')
 python3 server/guard_cli.py allow works-on-my-machine # scan stops flagging it (merged after built-in defaults)
+python3 server/guard_cli.py baseline audit           # what is frozen, and the review loop
 ```
 
 Both write your project's `agentseed.config.json` atomically and refuse to
@@ -349,7 +355,7 @@ Unknown keys are warned on stderr — a typo is never silently ignored.
 | Host capability | What you get |
 | --- | --- |
 | Full Agent Plugins | drop-in: skill + MCP auto-discovered, `${PLUGIN_DATA}` config honored |
-| MCP-capable client | all 9 tools via registration |
+| MCP-capable client | all 10 tools via registration |
 | Skills-only client | skill workflow; verification degrades to `guard_cli.py` via shell |
 | Plain terminal / CI | CLI gates with exit codes |
 
@@ -368,8 +374,8 @@ techniques). Every library lives under
 | | Prompt-only guardrail skills | Static import linters (MCP) | **AgentSeed** |
 | --- | --- | --- | --- |
 | Touches code | ❌ prompt only | ✅ import graphs | ✅ AST + lexical (registry-wide) |
-| Runs verification tools | ❌ | lint gates | ✅ 9 MCP tools incl. sandbox |
-| Hallucination-language scan | ❌ | ❌ | ✅ stub/oversold/fabricated, EN + CJK |
+| Runs verification tools | ❌ | lint gates | ✅ 10 MCP tools incl. sandbox |
+| Hallucination-language scan | ❌ | ❌ | ✅ stub/oversold/fabricated/fabricated_url, EN + CJK |
 | Enforcement | soft (skill text) | CI gate | **tiered**: skill + MCP + CI exit codes + hook profiles (advisory → diff → strict) |
 | 1.0.0 conformance linter | ❌ | ❌ | ✅ first |
 

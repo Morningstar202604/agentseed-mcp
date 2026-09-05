@@ -1,6 +1,7 @@
 """AgentSeed CLI tests (stdlib unittest, run the CLI as a subprocess)."""
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
@@ -72,6 +73,23 @@ class TestCli(unittest.TestCase):
         r = run_cli("sandbox", "--", "definitely-not-a-real-cmd-xyz")
         self.assertEqual(r.returncode, 1, r.stdout)
 
+    def test_sandbox_expect_exit_matches(self):
+        r = run_cli("sandbox", "--expect-exit", "3", "--", PY, "-c", "raise SystemExit(3)")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('"met": true', r.stdout)
+
+    def test_sandbox_expect_exit_mismatch_fails(self):
+        r = run_cli("sandbox", "--expect-exit", "3", "--", PY, "-c", "print('fine')")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"met": false', r.stdout)
+
+    def test_sandbox_expect_output_missing_fails(self):
+        r = run_cli(
+            "sandbox", "--expect-output", "wanted-marker", "--", PY, "-c", "print('other')"
+        )
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"met": false', r.stdout)
+
     def test_verify_directory_gives_clean_error(self):
         r = run_cli("verify", PLUGIN_ROOT)  # a directory
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
@@ -129,8 +147,7 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "mod.py")
             base = os.path.join(d, "baseline.json")
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("# fine\nx = 1\n")
+            Path(src).write_text("# fine\nx = 1\n", encoding="utf-8")
             r = run_cli("scan", d, "--baseline", base)  # no baseline yet -> creates
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue(os.path.isfile(base))
@@ -155,14 +172,112 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "doc.md")
             base = os.path.join(d, "baseline.json")
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("production ready claim lives here\n")
+            Path(src).write_text("production ready claim lives here\n", encoding="utf-8")
             run_cli("scan", d, "--baseline", base)
             # moving the SAME hit to another line must stay green (line-free fp)
-            with open(src, "w", encoding="utf-8") as fh:
-                fh.write("\n\n\nproduction ready claim lives here\n")
+            Path(src).write_text("\n\n\nproduction ready claim lives here\n", encoding="utf-8")
             r = run_cli("scan", d, "--baseline", base)
             self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_imports_manifest_flags_phantom_package(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            req = os.path.join(d, "requirements.txt")
+            Path(req).write_text("numpy==1.26.0\nphantom-req-pkg>=1.0\n", encoding="utf-8")
+            r = run_cli("imports", "--manifest", req)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("phantom-req-pkg", r.stdout)
+            self.assertIn('"kind": "requirements"', r.stdout)
+            # clean manifest exits 0
+            Path(req).write_text("numpy==1.26.0\nrequests>=2.0\n", encoding="utf-8")
+            r = run_cli("imports", "--manifest", req)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_imports_manifest_missing_file_is_usage_error(self):
+        r = run_cli("imports", "--manifest", "no_such_manifest.txt")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("does not exist", r.stderr)
+
+    def test_gate_coverage_report_then_strict(self):
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, timeout=60)
+            Path(d, "a.py").write_text("x = 1\n", encoding="utf-8")
+            # default: the gap is reported without failing
+            r = run_cli("gate", "--root", d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('"coverage"', r.stdout)
+            self.assertIn('"unverified"', r.stdout)
+            # strict: the gap fails the gate
+            r = run_cli("gate", "--root", d, "--coverage-strict")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn('"status": "fail"', r.stdout)
+            # recording evidence for the changed file repairs the gap
+            r = run_cli("record", "task", "--file", "a.py", "--data-dir",
+                        os.path.join(d, ".agentseed"))
+            self.assertEqual(r.returncode, 0, r.stdout)
+            r = run_cli("gate", "--root", d, "--coverage-strict")
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn('"status": "pass"', r.stdout)
+
+
+    def test_baseline_audit_reports_composition(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "mod.py")
+            base = os.path.join(d, "baseline.json")
+            Path(src).write_text("# TODO: later\nall tests pass, guaranteed\n", encoding="utf-8")
+            run_cli("scan", src, "--baseline", base)  # freeze 2 hits
+            r = run_cli("baseline", "audit", base)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('"ok": true', r.stdout)
+            self.assertIn('"hits": 3', r.stdout)
+            self.assertIn("stub_code", r.stdout)
+            self.assertIn("oversold", r.stdout)
+            self.assertIn("update-baseline", r.stdout)
+
+    def test_baseline_audit_missing_is_report_not_crash(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            r = run_cli("baseline", "audit", os.path.join(d, "nope.json"))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('"ok": false', r.stdout)
+            self.assertIn("does not exist", r.stdout)
+
+
+    def test_imports_manifest_diff_scopes_against_git_head(self):
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, timeout=60)
+            req = os.path.join(d, "requirements.txt")
+            Path(req).write_text(  # pytest-cov: unknown but pre-existing
+                "numpy==1.26.0\npytest-cov==5.0\n", encoding="utf-8"
+            )
+            env_git = subprocess.run(
+                ["git", "-C", d, "add", "requirements.txt"], capture_output=True, timeout=60
+            )
+            self.assertEqual(env_git.returncode, 0)
+            subprocess.run(
+                ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                 "-q", "-m", "base"],
+                cwd=d, capture_output=True, timeout=60,
+            )
+            # an agent adds a phantom dependency: the only suspect
+            with open(req, "a", encoding="utf-8") as fh:
+                fh.write("phantom-diff-pkg>=1.0\n")
+            r = run_cli("imports", "--manifest", req)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("phantom-diff-pkg", r.stdout)
+            self.assertIn('"preexisting_unknown"', r.stdout)
+            self.assertIn("pytest-cov", r.stdout)
+            self.assertNotIn("phantom-diff-pkg', 'preexisting", r.stdout)
 
 
 if __name__ == "__main__":

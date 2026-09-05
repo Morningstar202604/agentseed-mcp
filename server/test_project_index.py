@@ -88,6 +88,36 @@ class TestProjectIndex(unittest.TestCase):
         self.assertEqual(res["suspects"], ["helper"])
         self.assertNotIn("missing_imports", res)
 
+    def test_resolve_symbols_judges_before_the_call_is_written(self):
+        with _make_project() as d:
+            root = os.path.join(d, "proj")
+            _write(os.path.join(root, "utils.py"), "def helper():\n    return 1\n")
+            r = engine.resolve_symbols(["helper", "numpy", "hellper", "ghost_api"], root)
+            by = {x["name"]: x for x in r["results"]}
+            # project-defined: exists with defining file
+            self.assertTrue(by["helper"]["exists"])
+            self.assertEqual(by["helper"]["defined_in"], ["utils.py"])
+            # stdlib/known package: importable without a project definition
+            self.assertFalse(by["numpy"]["exists"])
+            self.assertTrue(by["numpy"]["stdlib_or_known_package"])
+            # typo: not project-defined, but did-you-mean points at the real one
+            self.assertFalse(by["hellper"]["exists"])
+            self.assertIn("helper", by["hellper"]["suggestions"])
+            # fabricated: nowhere, nothing close
+            self.assertFalse(by["ghost_api"]["exists"])
+            self.assertFalse(by["ghost_api"]["stdlib_or_known_package"])
+            self.assertFalse(r["all_found"])
+
+    def test_resolve_symbols_dedupes_and_handles_empty(self):
+        with _make_project() as d:
+            root = os.path.join(d, "proj")
+            _write(os.path.join(root, "utils.py"), "def helper():\n    return 1\n")
+            r = engine.resolve_symbols(["helper", " helper ", ""], root)
+            self.assertEqual([x["name"] for x in r["results"]], ["helper"])
+            empty = engine.resolve_symbols([], root)
+            self.assertEqual(empty["results"], [])
+            self.assertFalse(empty["all_found"])
+
     def test_plain_detect_carries_did_you_mean(self):
         res = engine.detect_undefined_symbols("def f():\n    return prinnt()\n")
         self.assertIn("prinnt", res["suspects"])

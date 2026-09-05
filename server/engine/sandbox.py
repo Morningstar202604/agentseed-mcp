@@ -236,6 +236,8 @@ def sandbox_run(
     allowed_prefixes: list[str] | None = None,
     on_proc=None,
     env_mode: str | None = None,
+    expected_exit: int | None = None,
+    expect_output: str | None = None,
 ) -> dict:
     """Run a command as a subprocess (no shell) with a timeout.
 
@@ -261,13 +263,24 @@ def sandbox_run(
     server environment through; "scrub" drops credential-looking variable
     names before spawn (best-effort denylist, see ``build_env``).
 
+    ``expected_exit`` / ``expect_output`` — optional behavioral assertions
+    (executional verification): the run's observed exit code and output are
+    judged against them. ``expect_output`` is a substring matched against
+    stdout OR stderr. When at least one is given, the result gains an
+    ``"expectations"`` verdict dict; without them the result shape is
+    unchanged. Assertions never replace the raw observed facts — both stay
+    in the result.
+
     ``on_proc`` (advanced): invoked with the live Popen so async callers can
     register it for cancellation. Timeouts and cancellations kill the whole
     process tree (POSIX process group / Windows taskkill /T), not just the
     direct child.
 
     Returns:
-        {"exit_code": int, "stdout": str, "stderr": str, "timed_out": bool}
+        {"exit_code": int, "stdout": str, "stderr": str, "timed_out": bool,
+         "expectations": {"expected_exit", "exit_met", "expected_output",
+                          "output_met", "met"},   # only when asserting
+        }
     """
     if not isinstance(command, list) or not command:
         return {
@@ -284,4 +297,19 @@ def sandbox_run(
         argv = [resolved, *command[1:]]
     else:
         argv = list(command)
-    return _run_command(argv, timeout, cwd, on_proc=on_proc, env=build_env(env_mode))
+    result = _run_command(argv, timeout, cwd, on_proc=on_proc, env=build_env(env_mode))
+    if expected_exit is not None or expect_output is not None:
+        exit_met = None if expected_exit is None else result["exit_code"] == expected_exit
+        output_met = (
+            None
+            if expect_output is None
+            else (expect_output in result["stdout"] or expect_output in result["stderr"])
+        )
+        result["expectations"] = {
+            "expected_exit": expected_exit,
+            "exit_met": exit_met,
+            "expected_output": expect_output,
+            "output_met": output_met,
+            "met": all(v for v in (exit_met, output_met) if v is not None),
+        }
+    return result

@@ -104,6 +104,7 @@ class TestServerProtocol(unittest.TestCase):
             names,
             {
                 "verify_code",
+                "resolve_symbol",
                 "verify_file",
                 "check_contract",
                 "check_imports",
@@ -127,6 +128,23 @@ class TestServerProtocol(unittest.TestCase):
         )
         result = json.loads(r["result"]["content"][0]["text"])
         self.assertTrue(result["clean"])
+        r = self._rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "resolve_symbol",
+                    "arguments": {"names": ["zoneinfo", "detect_undefined_symbols", "magic_unknown"]},
+                },
+            }
+        )
+        result = json.loads(r["result"]["content"][0]["text"])
+        by_name = {x["name"]: x for x in result["results"]}
+        self.assertTrue(by_name["zoneinfo"]["stdlib_or_known_package"])
+        self.assertTrue(by_name["detect_undefined_symbols"]["exists"])
+        self.assertFalse(by_name["magic_unknown"]["exists"])
+        self.assertFalse(by_name["magic_unknown"]["stdlib_or_known_package"])
 
     def test_record_verification_via_protocol(self):
         r = self._rpc(

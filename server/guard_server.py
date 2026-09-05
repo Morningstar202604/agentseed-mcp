@@ -8,8 +8,10 @@ which MCP SDK version the client ships.
 
 Protocol: line-delimited JSON-RPC 2.0 over stdin/stdout (stdio transport).
 
-Tools (9 — the 8 `guard_cli.py` subcommands plus `verify_file`):
+Tools (10 — the 9 `guard_cli.py` subcommands plus `verify_file` and
+`resolve_symbol`):
   - verify_code         -> detect_undefined_symbols
+  - resolve_symbol      -> resolve_symbols (write-time existence check)
   - verify_file         -> run_verifier (toolchain adapters + builtin fallback)
   - check_contract      -> check_contract (source vs a written spec)
   - check_imports       -> imported-but-unknown packages (slopsquatting)
@@ -24,6 +26,7 @@ Tools (9 — the 8 `guard_cli.py` subcommands plus `verify_file`):
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -111,11 +114,37 @@ TOOLS = [
         ["source"],
     ),
     _tool(
+        "resolve_symbol",
+        "Write-time prevention: check whether symbol/package names exist "
+        "BEFORE calling them — the complement of verify_code, which judges "
+        "code after it is written. A name defined nowhere in the project and "
+        "unknown to stdlib/the known-package set is a likely hallucinated "
+        "API: resolve it, import it, or drop the call before writing the "
+        "code. Returns per-name existence, defining files "
+        "('defined_in'), the stdlib/known-package flag, and did-you-mean "
+        "suggestions from real project symbols.",
+        {
+            "names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Symbol or package names to resolve, e.g. "
+                "['process_data', 'numpy'].",
+            },
+            "root": {
+                "type": "string",
+                "description": "Project root directory (default: inferred from "
+                "the server's working directory).",
+            },
+        },
+        ["names"],
+    ),
+    _tool(
         "verify_file",
         "Verify a file that exists on disk with the best available engine. "
         "engine='auto' (default) runs a project toolchain verifier when "
-        "installed — ruff or pyflakes for Python, tsc for TypeScript, eslint "
-        "for JavaScript, go vet for Go, cargo check for Rust — through the "
+        "installed — ruff or pyflakes or mypy for Python, tsc for TypeScript, "
+        "eslint for JavaScript, go vet for Go, cargo check for Rust, javac "
+        "for Java — through the "
         "bounded execution channel (no shell, capped output, timeout, tree "
         "kill), and falls back to the built-in analyzer otherwise; "
         "engine='builtin' forces the built-in analyzer; engine='<name>' "
@@ -167,9 +196,12 @@ TOOLS = [
         "Flag top-level imports that are neither Python stdlib nor in the "
         "known-package set (stdlib + common third-party + config "
         "'known_packages') — a possible hallucinated package (slopsquatting, "
-        "USENIX Security 2025). Report, not a gate: verify the name exists in "
-        "the registry before installing. Python only; other languages return "
-        "an empty result.",
+        "USENIX Security 2025). With 'manifest' set, scans dependency "
+        "MANIFEST text instead of code (requirements/pyproject/package.json; "
+        "kind inferred or forced via 'manifest_kind') — the first surface a "
+        "hallucinated package touches. Report, not a gate: verify the name "
+        "exists in the registry before installing. Code mode is Python only; "
+        "other languages return an empty result.",
         {
             "source": {"type": "string", "description": "Source code to analyze."},
             "language": {
@@ -177,20 +209,32 @@ TOOLS = [
                 "description": "Source language (python supported; others return empty).",
                 "default": "python",
             },
+            "manifest": {
+                "type": "string",
+                "description": "Dependency-manifest text to scan instead of code "
+                "(requirements.txt / pyproject.toml / package.json content).",
+            },
+            "manifest_kind": {
+                "type": "string",
+                "enum": ["requirements", "pyproject", "package.json"],
+                "description": "Manifest kind; inferred from content when omitted.",
+            },
         },
         ["source"],
     ),
     _tool(
         "scan_hallucination",
-        "Scan source for hallucination signals in three groups: stub_code "
+        "Scan source for hallucination signals in four groups: stub_code "
         "(stub/mock/fake/placeholder/todo/占位/待实现/...), oversold "
         "(guaranteed/all tests pass/production ready/保证通过/...), fabricated "
-        "(simulated/invented/虚构/编造/...). English AND CJK tokens; extend "
-        "the pool via config 'extra_tokens'. Each hit carries a severity; "
-        "only error-severity hits set 'blocking': true. A blocking result "
-        "means the task is NOT done — fix the flagged lines or downgrade "
-        "deliberately via config. Warning/info hits must be reported but do "
-        "not block completion.",
+        "(simulated/invented/虚构/编造/...), and fabricated_url (placeholder "
+        "or reserved-TLD domains like api.yourdomain.com or myapp.test — "
+        "phantom squatting; the reserved example.com/net/org/edu set stays "
+        "clean). English AND CJK tokens; extend the pool via config "
+        "'extra_tokens'. Each hit carries a severity; only error-severity "
+        "hits set 'blocking': true. A blocking result means the task is NOT "
+        "done — fix the flagged lines or downgrade deliberately via config. "
+        "Warning/info hits must be reported but do not block completion.",
         {
             "source": {"type": "string", "description": "Source code to scan."},
             "allowlist": {
@@ -220,8 +264,12 @@ TOOLS = [
         "sandbox_run",
         "Deterministic execution channel: run a command (no shell) in a "
         "subprocess with a timeout and captured output. Turns 'tests pass' "
-        "into an observed fact. Use to verify test suites, type checks, "
-        "linters, or any claim that requires running code. "
+        "into an observed fact. Optional behavioral assertions upgrade "
+        "'the command ran' to 'it produced the expected result': pass "
+        "expected_exit (integer) and/or expect_output (substring of stdout "
+        "or stderr) and the result gains an 'expectations' verdict. Use to "
+        "verify test suites, type checks, linters, or any claim that "
+        "requires running code. "
         "WARNING: this executes real processes on the user's machine — "
         "MUST be gated behind user approval in the client. Commands may be "
         "restricted by config 'sandbox_allowed_prefixes'.",
@@ -239,6 +287,16 @@ TOOLS = [
             "cwd": {
                 "type": "string",
                 "description": "Working directory (optional).",
+            },
+            "expected_exit": {
+                "type": "integer",
+                "description": "Behavioral assertion: the child's exit code must "
+                "equal this; judged in result 'expectations.exit_met'.",
+            },
+            "expect_output": {
+                "type": "string",
+                "description": "Behavioral assertion: this substring must appear "
+                "in stdout or stderr; judged in result 'expectations.output_met'.",
             },
         },
         ["command"],
@@ -266,8 +324,9 @@ TOOLS = [
         "(verification-log.jsonl under PLUGIN_DATA). The SDD contract "
         "requires a completion report with attached evidence — call this "
         "after verify/scan/sandbox runs to persist what was checked, the "
-        "verdict, and a short summary. Returns the log path and total "
-        "entries.",
+        "verdict, and a short summary. Pass 'files' (paths verified for the "
+        "task) so the gate's coverage stage can name changed-but-unverified "
+        "files. Returns the log path and total entries.",
         {
             "task": {
                 "type": "string",
@@ -285,6 +344,12 @@ TOOLS = [
                     "required": ["tool", "status"],
                 },
                 "description": "Verification steps performed and their verdicts.",
+            },
+            "files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Paths verified for this task (project-relative preferred); "
+                "consumed by the gate's coverage stage.",
             },
             "summary": {"type": "string", "description": "One-line overall conclusion."},
         },
@@ -311,6 +376,13 @@ def _execute(name: str, args: dict) -> dict:
             args.get("language", "python"),
             suppress=CONFIG_SUPPRESS,
         )
+    if name == "resolve_symbol":
+        root = args.get("root") or engine.find_project_root(os.getcwd()) or os.getcwd()
+        return engine.resolve_symbols(
+            args.get("names") or [],
+            root,
+            known_packages=CONFIG_KNOWN_PACKAGES,
+        )
     if name == "verify_file":
         return engine.run_verifier(
             args.get("path", ""),
@@ -325,6 +397,12 @@ def _execute(name: str, args: dict) -> dict:
             args.get("language", "python"),
         )
     if name == "check_imports":
+        if args.get("manifest"):
+            return engine.check_manifest(
+                args["manifest"],
+                kind=args.get("manifest_kind"),
+                known_packages=CONFIG_KNOWN_PACKAGES,
+            )
         return engine.check_imports(
             args.get("source", ""),
             args.get("language", "python"),
@@ -350,6 +428,7 @@ def _execute(name: str, args: dict) -> dict:
             args.get("task", ""),
             args.get("checks") or [],
             summary=args.get("summary"),
+            files=args.get("files"),
         )
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
@@ -382,6 +461,8 @@ def _run_call_async(msg_id, name: str, args: dict) -> threading.Thread:
                     allowed_prefixes=CONFIG_SANDBOX_ALLOW,
                     on_proc=lambda proc: entry.__setitem__("proc", proc),
                     env_mode=CONFIG_SANDBOX_ENV,
+                    expected_exit=args.get("expected_exit"),
+                    expect_output=args.get("expect_output"),
                 )
             else:
                 result = _execute(name, args)

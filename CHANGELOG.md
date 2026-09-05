@@ -3,6 +3,100 @@
 All notable changes to AgentSeed are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com); versioning follows [SemVer](https://semver.org).
 
+## [0.6.0] — 2026-09-05
+
+Hardening release: every addition closes a gap named in the 2025
+hallucination literature (CodeHalu's executional verification, the
+slopsquatting first-contact surface, the agent-hallucination surveys'
+self-awareness class) while keeping the zero-required-dependency
+contract and the self-conformance gate green.
+
+### Added
+- **`resolve_symbol` — the 10th MCP tool (write-time prevention).**
+  verify_code judges code after it is written; `resolve_symbol` answers
+  "does this name exist?" BEFORE the call is written, against the project
+  symbol index plus stdlib/known packages, with did-you-mean suggestions
+  from real symbols.
+- **`fabricated_url` scan group (phantom squatting).** A structural
+  domain pass joins the three literal-token groups: placeholder stand-ins
+  (`api.yourdomain.com`), reserved TLDs used as if real (`myapp.test`),
+  and "example" fabricated into non-reserved domains. The RFC/IANA
+  example.com/net/org/edu set stays clean; default severity warning.
+- **Dependency-manifest scanning (`check_manifest`).** The slopsquatting
+  first-contact surface: `guard_cli imports --manifest` and the
+  `check_imports` tool's `manifest`/`manifest_kind` args scan
+  requirements*.txt, PEP 621 pyproject arrays, Poetry dependency sections
+  and package.json dependency objects (npm has its own curated known set).
+- **`sandbox_run` behavioral assertions.** Optional `expected_exit` and
+  `expect_output` upgrade "the command ran" to "it ran as expected"
+  (CodeHalu's executional verification, minimally); the result gains an
+  `expectations` verdict, and CLI `sandbox --expect-exit/--expect-output`
+  exits on the assertion verdict.
+- **Gate verification-coverage stage.** `record_verification` persists
+  `files`; the gate's coverage stage diffs `git status --porcelain`
+  against them and names changed-but-unverified files. Report-only by
+  default; `--coverage-strict` blocks; non-git roots degrade to an honest
+  "cannot compute". AgentSeed's own state never counts as work.
+- **`baseline audit` subcommand.** The review loop for the frozen scan
+  baseline: composition by group, loudest frozen signals, and the
+  prune-allow-freeze discipline. Report-only.
+- **mypy and javac toolchain adapters.** mypy joins the Python auto-chain
+  (`name-defined`); javac covers Java from its stderr stream
+  (`cannot find symbol` + symbol line).
+
+### Changed
+- **Oversold pool: unverified security and performance claims.**
+  "no vulnerabilities", "secure by design", "unhackable", "highly
+  optimized", "zero downtime" (and ZH counterparts) are the same
+  evidence-free class as "production ready"; legitimate hardening and
+  optimization descriptions stay clean (negative-tested).
+- **`--strict` severity promotion is registry-driven** — every
+  default-warning group (now stub_code and fabricated_url) blocks,
+  instead of a hardcoded stub_code entry.
+- **Non-zero adapter exits with zero extracted findings must show at
+  least one diagnostic-shaped line** — a tool that failed to run is never
+  parsed as clean; "ran but reported only other diagnostic classes" stays
+  an honest class-scoped pass.
+- **Tool count 9 → 10 and group count 3 → 4** across all three languages'
+  README/DESIGN/SKILL, with the adapter list and the ja README's stale
+  "8 tools" heading corrected along the way.
+
+### Fixed — field-tested against five real-world repositories
+  (flask, requests, django 2930-file gate, gin, axios) — every class below
+  was a false positive found in real code, then regression-tested:
+
+- **Single-quote string patterns are line-bounded** in the 11 languages
+  where single quotes never span lines (go/rust/java/c/cpp/csharp/kotlin/
+  dart/lua/r/zig). An apostrophe in a comment ("doesn't") opened a
+  multi-line bogus string span that swallowed following code — gin's
+  same-file `processAccounts` definition became a suspect.
+- **The TS/JS native pass masks strings and comments** before scanning
+  (JSDoc text "EF BB BF (the UTF-8 BOM)" matched the bare-call pattern and
+  flagged `BF` on axios), collects **object destructuring from any
+  initializer** (`const {getPrototypeOf} = Object`), **class/object method
+  definitions and their parameters** (`constructor(x) {` is a definition,
+  not a call; `forEach(fn) { fn(h) }` defines fn), **arrow params without a
+  declaration prefix** (`lookup = (host, opt, cb) =>`), and **common
+  Web/Node globals** (URL, Uint8Array, TypeError, XMLHttpRequest,
+  ReadableStream, ...). Member chains split across lines (prettier style
+  `foo.
+  replace(...)`) are no longer misread as bare calls.
+  Result: axios/lib 62 real JS files — 9 files with suspects before, 0 after.
+- **The symbol-index cache records the engine version** and rebuilds when
+  it differs — a cache written by older collection rules otherwise keeps
+  serving stale judgments after an engine fix.
+- **Manifest scanning diff-scopes against git HEAD** (`imports --manifest`):
+  a long-tail unknown the project already depends on is reported separately
+  as `preexisting_unknown`; only NEWLY ADDED names are suspects. Without
+  this the report flagged 49 of axios's 62 real dependencies — noise that
+  trains users to ignore the report. On a real axios clone: 0 suspects.
+- **Python detection honors `# noqa` lines** (flake8 convention — django's
+  own tests mark forward-reference annotations `# NOQA: F821`) and skips
+  dunder protocol names (`__path__`, `__version__`). django gate suspects
+  across 2930 files: 5 → 0; the only remaining finding is django's own
+  deliberately-broken syntax fixture.
+- **Coverage excludes `__pycache__/`** — interpreter cache is not work.
+
 ## [0.5.0] — 2026-08-30
 
 ### Changed

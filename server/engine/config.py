@@ -7,7 +7,7 @@ import os
 
 CONFIG_FILENAME = "agentseed.config.json"
 _VALID_SEVERITIES = {"error", "warning", "info"}
-VALID_GROUPS = {"stub_code", "oversold", "fabricated"}
+VALID_GROUPS = {"stub_code", "oversold", "fabricated", "fabricated_url"}
 
 # Every key load_config() understands; anything else is a likely typo and
 # callers should surface a warning (silently ignoring typos = silent no-op).

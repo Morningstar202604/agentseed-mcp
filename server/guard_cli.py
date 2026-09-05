@@ -173,11 +173,80 @@ def cmd_contract(args: argparse.Namespace) -> int:
     return 0 if result["contract_ok"] else 1
 
 
+def _git_head_text(path: str) -> str | None:
+    """Manifest content at git HEAD, or None when not recoverable (not a
+    repo / untracked / git missing). Any failure degrades to no baseline —
+    the report then flags every unknown, honestly saying so."""
+    import subprocess as _sp
+
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    rel = os.path.relpath(os.path.abspath(path), _git_toplevel(directory))
+    try:
+        proc = _sp.run(
+            ["git", "-C", directory, "show", f"HEAD:{rel}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, _sp.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _git_toplevel(directory: str) -> str:
+    import subprocess as _sp
+
+    try:
+        proc = _sp.run(
+            ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+    except (OSError, _sp.TimeoutExpired):
+        pass
+    return directory
+
+
 def cmd_imports(args: argparse.Namespace) -> int:
-    """Slopsquatting gate: exit 1 when a top-level import is neither stdlib
-    nor in the known-package set (defaults + config known_packages + --known)."""
+    """Slopsquatting gate: exit 1 when a top-level import (or a manifest
+    dependency, with --manifest) is neither in the known-package set nor
+    resolvable another way (defaults + config known_packages + --known).
+    Manifest mode diffs against git HEAD when possible: only NEWLY ADDED
+    unknown names are suspicious; pre-existing unknowns are listed apart."""
     config = engine.load_config(getattr(args, "config", None))
     known = args.known or engine.config_str_list(config, "known_packages")
+    manifest_path = getattr(args, "manifest", None)
+    if manifest_path:
+        if not os.path.isfile(manifest_path):
+            print(f"error: manifest does not exist: {manifest_path}", file=sys.stderr)
+            return 2
+        with open(manifest_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        kind = engine.manifest_kind_for_path(manifest_path)
+        pre: list[str] | None = None
+        head = _git_head_text(manifest_path)
+        if head is not None:
+            pre = engine.manifest_names(head, kind)
+        result = engine.check_manifest(
+            text,
+            kind=kind,
+            known_packages=known,
+            preexisting=pre,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["manifest_ok"] else 1
+    if not getattr(args, "source", None):
+        print("error: provide inline/file source or --manifest", file=sys.stderr)
+        return 2
     source = _read_source(args.source)
     result = engine.check_imports(source, known_packages=known)
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -244,7 +313,8 @@ def cmd_scan_baseline(args: argparse.Namespace) -> int:
         or engine.DEFAULT_ALLOWLIST
     )
     severities = (
-        {"stub_code": "error"}
+        # registry-driven: every default-warning group blocks under --strict
+        {g: "error" for g, s in engine.DEFAULT_SEVERITIES.items() if s == "warning"}
         if (args.strict and not args.stub_ok)
         else engine.config_severities(config)
     )
@@ -300,7 +370,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         or engine.DEFAULT_ALLOWLIST
     )
     severities = (
-        {"stub_code": "error"}
+        # registry-driven: every default-warning group blocks under --strict
+        {g: "error" for g, s in engine.DEFAULT_SEVERITIES.items() if s == "warning"}
         if (args.strict and not args.stub_ok)
         else engine.config_severities(config)
     )
@@ -342,8 +413,14 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
         args.cwd,
         allowed_prefixes=engine.config_str_list(config, "sandbox_allowed_prefixes"),
         env_mode=env_mode,
+        expected_exit=getattr(args, "expect_exit", None),
+        expect_output=getattr(args, "expect_output", None),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("expectations"):
+        # with an assertion, the verdict is "matched the expectation", not
+        # "exited zero" — the child's real exit code stays in the JSON
+        return 0 if result["expectations"]["met"] else 1
     if result["timed_out"]:
         return 1
     if result["exit_code"] < 0:
@@ -361,6 +438,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         checks,
         summary="; ".join(args.note) if args.note else None,
         data_dir=args.data_dir,
+        files=args.file or [],
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
@@ -749,6 +827,64 @@ def cmd_allow(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 1
 
 
+def cmd_baseline_audit(args: argparse.Namespace) -> int:
+    """Report what the frozen scan baseline contains.
+
+    The baseline is the noise-decay mechanism that keeps 'only NEW signals
+    fail' livable — and, unreviewed, a permanent hiding place. The audit is
+    the review discipline: composition by group, the loudest frozen signals,
+    and the prune-and-freeze loop. Report-only: always exits 0.
+    """
+    path = args.path or "baseline-scan.json"
+    payload: dict = {"baseline": os.path.abspath(path)}
+    if not os.path.isfile(path):
+        payload["ok"] = False
+        payload["error"] = (
+            f"baseline does not exist: {path} (a gate or 'scan --baseline' run creates it)"
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        files = data.get("files") or {}
+        if not isinstance(files, dict):
+            raise ValueError("files must be an object")
+    except (OSError, ValueError) as exc:
+        payload["ok"] = False
+        payload["error"] = f"cannot read baseline: {exc}"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    totals: dict[str, int] = {}
+    for counts in files.values():
+        for key, count in (counts or {}).items():
+            totals[key] = totals.get(key, 0) + int(count)
+    groups: dict[str, int] = {}
+    for key, count in totals.items():
+        group = key.split("|", 1)[0]
+        groups[group] = groups.get(group, 0) + count
+    top = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    payload.update(
+        {
+            "ok": True,
+            "schema_version": data.get("version"),
+            "files": len(files),
+            "hits": sum(totals.values()),
+            "distinct_signals": len(totals),
+            "groups": dict(sorted(groups.items())),
+            "top_frozen_signals": [{"signal": k, "count": v} for k, v in top],
+            "advice": (
+                "audit is a report: fix what is fixed upstream, allow the "
+                "legitimate idioms (guard_cli allow <word>), then freeze the "
+                "reduced state with scan --update-baseline. Recreate the audit "
+                "after every freeze."
+            ),
+        }
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     """Composite CI gate — the hard layer behind the soft skill:
     1) plugin conformance (spec linter; skipped on non-plugin roots so the
@@ -756,6 +892,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
     2) verify_code over every Python file (any suspect or unparseable file fails)
     3) scan with baseline comparison (only NEW signals fail; a first run on a
        repo creates the baseline and passes, enforcement starts on the next)
+    4) verification coverage (report only by default; --coverage-strict fails
+       when uncommitted changes have no record_verification(files=...) evidence)
     Single exit code: 0 = all gates pass, 1 = any failure."""
     import time
 
@@ -842,6 +980,28 @@ def cmd_gate(args: argparse.Namespace) -> int:
         summary["checks"]["scan"] = {"status": scan_status, "baseline": os.path.abspath(baseline)}
         failed |= rc != 0
 
+    # -- 4. verification coverage (report by default, --coverage-strict blocks)
+    cov = engine.coverage(root)
+    if not cov["computable"]:
+        summary["checks"]["coverage"] = {"status": "skipped", "note": cov["note"]}
+    elif not cov["changed"]:
+        summary["checks"]["coverage"] = {
+            "status": "skipped",
+            "note": "no uncommitted changes: nothing to cover",
+        }
+    else:
+        strict = getattr(args, "coverage_strict", False)
+        unverified = cov["unverified"]
+        status = "pass" if not unverified else ("fail" if strict else "report")
+        summary["checks"]["coverage"] = {
+            "status": status,
+            "changed_files": len(cov["changed"]),
+            "verified_files": len(cov["verified"]),
+            "unverified": unverified,
+            "note": cov["note"] if unverified else "",
+        }
+        failed |= strict and bool(unverified)
+
     summary["verdict"] = "fail" if failed else "pass"
     summary["elapsed_s"] = round(time.perf_counter() - started, 2)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -907,7 +1067,15 @@ def main(argv: list[str] | None = None) -> int:
     p_imports = sub.add_parser(
         "imports", help="flag imports not in stdlib / known packages (slopsquatting)"
     )
-    p_imports.add_argument("source", help="source code or a file path")
+    p_imports.add_argument(
+        "source", nargs="?", default="", help="source code or a file path"
+    )
+    p_imports.add_argument(
+        "--manifest",
+        metavar="PATH",
+        help="scan a dependency manifest instead (requirements*.txt, "
+        "pyproject.toml, package.json; kind inferred from the filename)",
+    )
     p_imports.add_argument(
         "--known",
         action="append",
@@ -924,7 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         "--strict", action="store_true", help="disable default exclusions; stub hits become errors"
     )
     p_scan.add_argument(
-        "--stub-ok", action="store_true", help="with --strict: keep stub_code at warning severity"
+        "--stub-ok", action="store_true", help="with --strict: keep default-warning groups (stub_code, fabricated_url) at warning"
     )
     p_scan.add_argument("--config", help="explicit config file path")
     p_scan.add_argument(
@@ -954,6 +1122,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_gate.add_argument("--no-baseline", action="store_true", help="skip the scan stage")
     p_gate.add_argument(
+        "--coverage-strict",
+        action="store_true",
+        help="fail when uncommitted changes have no record_verification "
+        "evidence (default: report the gap without failing)",
+    )
+    p_gate.add_argument(
         "--require-conformance",
         action="store_true",
         help="fail when the root has no plugin.json instead of skipping the "
@@ -961,6 +1135,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_gate.add_argument("--config", help="explicit config file path")
     p_gate.set_defaults(func=cmd_gate)
+
+    p_baseline = sub.add_parser(
+        "baseline", help="baseline maintenance (audit: what is frozen, review advice)"
+    )
+    p_baseline.add_argument("action", choices=["audit"], help="report baseline composition")
+    p_baseline.add_argument(
+        "path", nargs="?", default=None, help="baseline JSON (default: ./baseline-scan.json)"
+    )
+    p_baseline.set_defaults(func=cmd_baseline_audit)
 
     p_sandbox = sub.add_parser("sandbox", help="run a command with timeout + captured output")
     p_sandbox.add_argument(
@@ -974,6 +1157,19 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="environment policy (default: config sandbox_env / inherit)",
     )
+    p_sandbox.add_argument(
+        "--expect-exit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="behavioral assertion: child exit code must equal N (CLI exits 1 otherwise)",
+    )
+    p_sandbox.add_argument(
+        "--expect-output",
+        default=None,
+        metavar="STR",
+        help="behavioral assertion: STR must appear in stdout or stderr (CLI exits 1 otherwise)",
+    )
     p_sandbox.set_defaults(func=cmd_sandbox)
 
     p_record = sub.add_parser("record", help="append a verification audit entry")
@@ -986,6 +1182,12 @@ def main(argv: list[str] | None = None) -> int:
         help="e.g. sandbox_run=pass (repeatable; default pass)",
     )
     p_record.add_argument("--note", action="append", help="free-text note (repeatable)")
+    p_record.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="file verified for this task (repeatable; feeds the gate's coverage stage)",
+    )
     p_record.add_argument("--data-dir", help="override PLUGIN_DATA for the log")
     p_record.set_defaults(func=cmd_record)
 

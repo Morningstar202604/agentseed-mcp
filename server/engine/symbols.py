@@ -86,9 +86,85 @@ TS_GLOBALS = {
     "isFinite",
     "encodeURIComponent",
     "decodeURIComponent",
+    "encodeURI",
+    "decodeURI",
     "undefined",
     "NaN",
     "Infinity",
+    # Web/Node globals real code calls every day (axios http adapter flagged
+    # URL/Uint8Array/TypeError before these were added)
+    "globalThis",
+    "URL",
+    "URLSearchParams",
+    "Reflect",
+    "Proxy",
+    "WeakMap",
+    "WeakSet",
+    "WeakRef",
+    "Intl",
+    "TypeError",
+    "RangeError",
+    "EvalError",
+    "ReferenceError",
+    "SyntaxError",
+    "URIError",
+    "ArrayBuffer",
+    "SharedArrayBuffer",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int8Array",
+    "Uint16Array",
+    "Int16Array",
+    "Uint32Array",
+    "Int32Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "DataView",
+    "TextEncoder",
+    "TextDecoder",
+    "AbortController",
+    "AbortSignal",
+    "Blob",
+    "File",
+    "FileReader",
+    "FormData",
+    "Headers",
+    "Request",
+    "Response",
+    "WebSocket",
+    "Worker",
+    "Event",
+    "EventTarget",
+    "CustomEvent",
+    "MessageChannel",
+    "BroadcastChannel",
+    "crypto",
+    "atob",
+    "btoa",
+    "structuredClone",
+    "queueMicrotask",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    "setImmediate",
+    "clearImmediate",
+    "caches",
+    "navigator",
+    "location",
+    "self",
+    "history",
+    "localStorage",
+    "sessionStorage",
+    "XMLHttpRequest",
+    "ReadableStream",
+    "WritableStream",
+    "TransformStream",
+    "DOMException",
+    "escape",
+    "unescape",
+    "Buffer",
+    "performance",
 }
 
 TS_KEYWORDS = {
@@ -144,6 +220,29 @@ TS_KEYWORDS = {
 
 _TS_IDENT = r"[A-Za-z_$][A-Za-z0-9_$]*"
 
+# The TS/JS native pass used to scan raw source: a JSDoc line like
+# "This catches EF BB BF (the UTF-8 BOM)" matched the bare-call pattern and
+# flagged "BF" on real code (axios). Mask strings and comments first — the
+# same discipline the generic registry engine already follows. Built lazily
+# because LangSpec is defined below the functions that use it.
+_TS_MASK_SPEC: LangSpec | None = None
+
+
+def _mask_ts(source: str) -> str:
+    global _TS_MASK_SPEC
+    if _TS_MASK_SPEC is None:
+        _TS_MASK_SPEC = LangSpec(
+            name="_ts_mask",
+            line_comments=("//",),
+            block_comments=(("/*", "*/"),),
+            strings=(
+                r'"(?:[^"\\\n]|\\.)*"',
+                r"'(?:[^'\\\n]|\\.)*'",
+                r"`(?:[^`\\]|\\.)*`",
+            ),
+        )
+    return _mask_source(source, _TS_MASK_SPEC)
+
 
 def _deduplicate(items: list[str]) -> list[str]:
     """Remove duplicates while preserving order."""
@@ -158,6 +257,7 @@ def _deduplicate(items: list[str]) -> list[str]:
 
 def _ts_defined_symbols(source: str) -> set[str]:
     """Collect identifiers defined or imported in a TS/JS source (lexical pass)."""
+    source = _mask_ts(source)
     defined: set[str] = set(TS_GLOBALS)
     # import { a, b as c } from '...'
     for m in re.finditer(r"\bimport\s*\{([^}]*)\}\s*from", source):
@@ -189,6 +289,20 @@ def _ts_defined_symbols(source: str) -> set[str]:
             p = p.split("=")[0].strip()
             if re.fullmatch(_TS_IDENT, p):
                 defined.add(p)
+    # const { a, b: c, d = 1, ...rest } = anyExpr — object destructuring from
+    # ANY initializer (React props destructuring, `const {getPrototypeOf} =
+    # Object`), not just require/import. Without this, idiomatic real-world
+    # code (axios) produced suspects on every destructure.
+    for m in re.finditer(r"\b(?:const|let|var)\s*\{([^{}]*)\}\s*=", source):
+        for part in m.group(1).split(","):
+            p = re.sub(r"^\.\.\.", "", part.strip())
+            if not p:
+                continue
+            alias = re.search(r":\s*(" + _TS_IDENT + r")", p)
+            name = alias.group(1) if alias else p.split(":")[0]
+            name = name.split("=")[0].strip()
+            if re.fullmatch(_TS_IDENT, name):
+                defined.add(name)
     # function/class/interface/type declarations
     for m in re.finditer(
         r"\b(?:async\s+)?(?:function|class|interface|type|enum)\s+(" + _TS_IDENT + r")",
@@ -216,6 +330,19 @@ def _ts_defined_symbols(source: str) -> set[str]:
 
     for m in re.finditer(r"\bfunction\s+(?:" + _TS_IDENT + r"\s*)?\(([^)]*)\)", source):
         _add_params(m.group(1))
+    # class/object method definitions: `constructor(x) {`,
+    # `getSession(authority, options) {`, `async run() {` — a definition site
+    # looks exactly like a bare call to the call-scan, so real-world classes
+    # (axios Axios.js) flagged constructor/request/_request. Line-anchored so
+    # call sites are not swept in; keyword matches (if/for/while) are
+    # harmless. The parameter list is collected too — method params
+    # (`forEach(fn) { fn(h) }`) were otherwise flagged as bare calls.
+    for m in re.finditer(
+        r"(?m)^[ \t]*(?:static\s+|async\s+|get\s+|set\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{",
+        source,
+    ):
+        defined.add(m.group(1))
+        _add_params(m.group(2))
     for m in re.finditer(
         r"\b(?:const|let|var)\s+" + _TS_IDENT + r"\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>",
         source,
@@ -226,21 +353,41 @@ def _ts_defined_symbols(source: str) -> set[str]:
         source,
     ):
         _add_params(m.group(1))
+    # params of arrows assigned to anything: `lookup = (hostname, opt, cb) =>`
+    # (reassignment to an existing variable, property or element LHS)
+    for m in re.finditer(
+        r"(?m)^[ \t]*[A-Za-z_$][\w$.\[\]]*\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>",
+        source,
+    ):
+        _add_params(m.group(1))
     return defined
 
 
 def _detect_ts_undefined(source: str) -> tuple[list[str], str]:
     """Lexical pass: calls/new-expressions whose callee is never defined."""
+    source = _mask_ts(source)
     defined = _ts_defined_symbols(source)
     suspects: list[str] = []
-    for m in re.finditer(r"\bnew\s+(" + _TS_IDENT + r")\s*\(", source):
-        name = m.group(1)
-        if name not in defined and name not in TS_KEYWORDS:
-            suspects.append(name)
-    for m in re.finditer(r"(?<![\w$.])(" + _TS_IDENT + r")\s*\(", source):
-        name = m.group(1)
-        if name not in defined and name not in TS_KEYWORDS:
-            suspects.append(name)
+    # Line-based so a member chain split across lines — prettier style
+    # `encode(value).\n  replace(/x/g, ':')` — is not misread as a bare
+    # `replace(...)` call (buildURL.js real-world false positive). A line
+    # whose call shape follows a previous line ending in "." is a member
+    # continuation, not a bare call.
+    prev_ends_dot = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        chained = prev_ends_dot and bool(re.match(r"[A-Za-z_$]", stripped))
+        prev_ends_dot = stripped.endswith((".", "?."))
+        if chained:
+            continue
+        for m in re.finditer(r"\bnew\s+(" + _TS_IDENT + r")\s*\(", line):
+            name = m.group(1)
+            if name not in defined and name not in TS_KEYWORDS:
+                suspects.append(name)
+        for m in re.finditer(r"(?<![\w$.])(" + _TS_IDENT + r")\s*\(", line):
+            name = m.group(1)
+            if name not in defined and name not in TS_KEYWORDS:
+                suspects.append(name)
     note = (
         "Lexical regex pass, not a type checker; may miss destructured "
         "imports or produce false positives on dynamic/global references."
@@ -461,7 +608,7 @@ _register_lang(
         aliases=("golang",),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"`[^`]*`", r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"`[^`]*`", r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "package", "import", "func", "var", "const", "type", "struct",
@@ -495,7 +642,7 @@ _register_lang(
         aliases=("rs",),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "fn", "let", "mut", "const", "static", "struct", "enum",
@@ -537,7 +684,7 @@ _register_lang(
         aliases=(),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "public", "private", "protected", "static", "final", "void",
@@ -579,7 +726,7 @@ _register_lang(
         aliases=(),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "auto", "break", "case", "char", "const", "continue",
@@ -615,7 +762,7 @@ _register_lang(
         aliases=("c++", "cc", "cxx"),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "auto", "break", "case", "char", "class", "const", "constexpr",
@@ -658,7 +805,7 @@ _register_lang(
         aliases=("cs", "c#"),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'@"(?:[^"]|"")*"', r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'@"(?:[^"]|"")*"', r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "using", "namespace", "class", "interface", "enum", "struct",
@@ -777,7 +924,7 @@ _register_lang(
         aliases=("kt",),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r'"""[\s\S]*?"""', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r'"""[\s\S]*?"""', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "fun", "val", "var", "class", "interface", "object", "enum",
@@ -857,7 +1004,7 @@ _register_lang(
         aliases=(),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "class", "void", "int", "double", "bool", "String", "List",
@@ -894,7 +1041,7 @@ _register_lang(
         aliases=(),
         line_comments=("--",),
         block_comments=(("--[[", "]]"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "function", "local", "if", "then", "else", "elseif", "end",
@@ -923,7 +1070,7 @@ _register_lang(
         aliases=("rlang",),
         line_comments=("#",),
         block_comments=(),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "function", "if", "else", "for", "while", "repeat", "break",
@@ -957,7 +1104,7 @@ _register_lang(
         aliases=(),
         line_comments=("//",),
         block_comments=(("/*", "*/"),),
-        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\]|\\.)*'"),
+        strings=(r'"(?:[^"\\]|\\.)*"', r"'(?:[^'\\\n]|\\.)*'"),
         keywords=frozenset(
             {
                 "fn", "const", "var", "if", "else", "for", "while", "switch",
@@ -1157,6 +1304,16 @@ def detect_undefined_symbols(
 
     defined = _python_defined_symbols(tree)
 
+    # flake8-convention suppression: a trailing `# noqa` (bare or with codes,
+    # case-insensitive — django ships `# NOQA: F821` on forward-referencing
+    # annotations) marks the line as knowingly-unresolved. Skipping those
+    # lines keeps real projects clean without weakening unmarked lines.
+    noqa_lines = {
+        i
+        for i, line in enumerate(source.splitlines(), 1)
+        if re.search(r"#\s*noqa\b", line, re.IGNORECASE)
+    }
+
     # `from x import *` makes every module-level name potentially defined, so
     # a single-file scope walk would flag most real code as hallucinated. An
     # honest empty result beats an unreliable one; pyflakes does not help here
@@ -1198,19 +1355,29 @@ def detect_undefined_symbols(
                     suspects.append(target.id)
                     detail.append({"name": target.id, "line": getattr(target, "lineno", 0)})
         if name is not None and name not in defined and name not in seen:
+            lineno = getattr(node, "lineno", 0)
+            if re.fullmatch(r"__\w+__", name):
+                # interpreter protocol names (__path__, __version__, __all__):
+                # resolved by the import machinery, never by scope analysis
+                continue
+            if lineno in noqa_lines:
+                continue  # knowingly-unresolved per the flake8 convention
             seen.add(name)
             suspects.append(name)
-            detail.append({"name": name, "line": getattr(node, "lineno", 0)})
+            detail.append({"name": name, "line": lineno})
 
     pyfindings = _pyflakes_undefined(source)
     note = (
         "Static scope analysis only; no runtime; attribute calls "
-        "(foo.bar) are not expanded and may cause false negatives."
+        "(foo.bar) are not expanded and may cause false negatives. "
+        "Dunder protocol names and `# noqa`-marked lines are not flagged."
     )
     if pyfindings is not None:
         for name, line in pyfindings:
-            if name in defined or name in seen:
+            if name in defined or name in seen or line in noqa_lines:
                 continue
+            if re.fullmatch(r"__\w+__", name):
+                continue  # dunder protocol names: same skip as the AST pass
             seen.add(name)
             suspects.append(name)
             detail.append({"name": name, "line": line})

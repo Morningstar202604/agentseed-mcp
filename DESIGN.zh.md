@@ -70,16 +70,16 @@ AgentSeed 填补：**代码级 + 真跑工具 + Skill/MCP 闭环强制**。`chec
 
 ## 4. MCP 接口契约
 
-传输：基于 stdio 的逐行 JSON-RPC 2.0。服务器名 `agentseed`，版本 `0.5.0`，
+传输：基于 stdio 的逐行 JSON-RPC 2.0。服务器名 `agentseed`，版本 `0.6.0`，
 协议 `2024-11-05`。
 
 | 方法 | 说明 |
 | --- | --- |
 | `initialize` | 握手，返回 protocolVersion / capabilities / serverInfo |
-| `tools/list` | 返回 9 个工具 |
-| `tools/call` | 调用 `verify_code` / `verify_file` / `check_contract` / `check_imports` / `scan_hallucination` / `check_plugin` / `sandbox_run` / `schema_validate` / `record_verification` |
+| `tools/list` | 返回 10 个工具 |
+| `tools/call` | 调用 `verify_code` / `resolve_symbol` / `verify_file` / `check_contract` / `check_imports` / `scan_hallucination` / `check_plugin` / `sandbox_run` / `schema_validate` / `record_verification` |
 
-工具签名：见英文版 §4.2。`verify_file` 在已安装时运行项目自带工具链（ruff/pyflakes/tsc/eslint/go vet/cargo check），否则回退内置分析器，详见 §10.1。
+工具签名：见英文版 §4.2。`verify_file` 在已安装时运行项目自带工具链（ruff/pyflakes/mypy/tsc/eslint/go vet/cargo check/javac），否则回退内置分析器，详见 §10.1。
 
 ## 5. 关键算法
 
@@ -98,18 +98,24 @@ AgentSeed 填补：**代码级 + 真跑工具 + Skill/MCP 闭环强制**。`chec
   静态检查、不跑运行时；TS 与通用通道是词法而非类型检查——属性调用
   （`obj.m()`、`a::b()`）、宏、跨文件符号不分析；动态/全局引用可能误报，
   解构边界情况可能漏报。
-- **`sandbox_run`**：无 shell 子进程执行（超时 1–120 秒、输出截断）。CDV 通道 A
-  的落地——"测试通过"变成可观测事实。
+- **`sandbox_run`**：无 shell 子进程执行（超时 1–120 秒、输出截断），可选行为断言
+  （expected_exit / expect_output：退出码与输出子串逐项判定，结果附 expectations
+  裁决）——"跑过"升级为"跑出预期结果"（CodeHalu 的执行验证）。CDV 通道 A 的落地。
 - **`schema_validate`**：零依赖 JSON Schema 子集校验（type/enum/const/minLength/
   maxLength/pattern/minItems/maxItems/items/properties/required/additionalProperties）。
-- **`scan_hallucination_words`**：逐行正则词边界扫描**分组信号池（28+ 词）**：
+- **`scan_hallucination_words`**：逐行正则词边界扫描**分组信号池（50+ 词）**：
   - `stub_code`：stub/mock/fake/placeholder/dummy/todo/fixme/xxx/tbd/tba/wip/
     "not implemented"/"coming soon"
   - `oversold`：guaranteed/"definitely works"/"all tests pass"/"everything works"/
     "fully tested"/"production ready"/"no bugs"/"works perfectly"/"should work"/
-    "trust me"/"works on my machine"/"100% correct"/"bug free"/"zero errors"
+    "trust me"/"works on my machine"/"100% correct"/"bug free"/"zero errors"，
+    另含未验证的安全声称（"no vulnerabilities"/"secure by design"/"unhackable"）
+    与性能声称（"highly optimized"/"zero downtime"）
   - `fabricated`：simulated/hypothetical/imaginary/invented/fabricated/fictional/
     pretend/"made up"
+  - `fabricated_url`：结构化域名检测——占位域名（"api.yourdomain.com"）、被当作
+    真实使用的保留 TLD（"myapp.test"）、把 "example" 编进非保留域名
+    （"docs.example-fake-api.dev"）；保留的 example.com/net/org/edu 集合不命中
   返回 `hits[]`（word/group/line）、`clean` 与分组计数。
   来源：SFD Lab 五步反幻觉清单第 5 步；CDV（"'done, all tests pass' 是声明不是
   证据"）；reze83 先验证后声称规则。
@@ -135,7 +141,7 @@ AgentSeed 填补：**代码级 + 真跑工具 + Skill/MCP 闭环强制**。`chec
 | | 纯 prompt 技能（superpowers…） | 静态 import 检查器 | **AgentSeed** |
 | --- | --- | --- | --- |
 | 碰代码 | ❌ | ✅ import 图 | ✅ AST + 词法 |
-| 跑工具 | ❌ | lint 门禁 | ✅ 9 个 MCP 工具含沙箱 |
+| 跑工具 | ❌ | lint 门禁 | ✅ 10 个 MCP 工具含沙箱 |
 | 强制 | 软 | CI 门禁 | **硬闸门** |
 | 1.0.0 linter | ❌ | ❌ | ✅ |
 
@@ -197,14 +203,22 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' \
 裁决中的 `blocking` 字段是分级的决定而非原始扫描结果；`status` 取值
 `pass` / `flagged` / `blocked` / `skipped`。
 
-### 10.3 证据凭据（`engine/receipt.py`）
+### 10.3 验证覆盖率（`engine/audit.py`）
+
+凭据冻结的是你声称验证过的东西；覆盖率指名你改了却从未验证的文件——
+自我认知幻觉类。gate 的覆盖率阶段用 `git status --porcelain` 对照
+`record_verification(files=...)` 记录过的文件并列出缺口。默认只报告、
+`--coverage-strict` 才阻断；非 git 工作树降级为诚实的“无法计算”，
+绝不假绿。
+
+### 10.4 证据凭据（`engine/receipt.py`）
 
 凭据把一个已完成任务的验证状态冻结下来：检查项（工具 + 结论）、每个被
 验证文件的 SHA256 与大小、agentseed/python/平台版本，以及凭据文件自身的
 摘要——重新哈希即可发现任何后续篡改。审计日志追加一行与之关联。被点名的
 文件不存在时整个凭据大声失败。这是完成报告引用的工件，而不是散文。
 
-### 10.4 插件工具链（`guard_cli plugin …`）
+### 10.5 插件工具链（`guard_cli plugin …`）
 
 `init` 生成最小插件脚手架，随后用真实的合规检查器自检，不能通过则删除
 整棵树（过不了自家 linter 的脚手架不配留在磁盘上）；`validate` 重跑

@@ -72,15 +72,16 @@ AgentSeed は「**コードレベル + 実ツール実行 + Skill/MCP クロー�
 ## 4. MCP インターフェース契約
 
 トランスポート：stdio 上の行区切り JSON-RPC 2.0。サーバー名 `agentseed`、
-バージョン `0.5.0`、プロトコル `2024-11-05`。
+バージョン `0.6.0`、プロトコル `2024-11-05`。
 
 | ツール | 説明 |
 | --- | --- |
 | `verify_code` | 未定義/未インポートシンボルの静的検出（Python は AST、他は語彙パス） |
-| `verify_file` | ディスク上のファイルを最適なエンジンで検証（ruff/pyflakes/tsc/eslint/go vet/cargo、§10.1） |
+| `resolve_symbol` | 呼び出す前のシンボル存在判定（プロジェクト記号インデックス + stdlib/既知パッケージ、書き込み前予防） |
+| `verify_file` | ディスク上のファイルを最適なエンジンで検証（ruff/pyflakes/mypy/tsc/eslint/go vet/cargo/javac、§10.1） |
 | `check_contract` | 書かれた契約（requires/prohibits）に対してソースを検証 |
 | `check_imports` | stdlib と `known_packages` に無いトップレベル import を報告（slopsquatting ガード） |
-| `scan_hallucination` | 3 グループ幻覚シグナルスキャン（stub_code/oversold/fabricated） |
+| `scan_hallucination` | 4 グループ幻覚シグナルスキャン（stub_code/oversold/fabricated/fabricated_url） |
 | `check_plugin` | Agent Plugins 1.0.0 適合性 linter |
 | `sandbox_run` | 決定的実行チャネル（サブプロセス・タイムアウト付き） |
 | `schema_validate` | JSON Schema サブセット検証（ゼロ依存） |
@@ -97,14 +98,15 @@ AgentSeed は「**コードレベル + 実ツール実行 + Skill/MCP クロー�
   文字列をマスク → 定義を収集 → 未定義の裸呼び出し・`new` を検出。言語追加は
   レジストリ追加のみでエンジン変更不要。Ruby の括弧なし呼び出しは `bare_calls`
   フラグで対応。
-- **`scan_hallucination_words`** — 28+ シグナルのグループ化ワード境界スキャン。
+- **`scan_hallucination_words`** — 50+ シグナルのグループ化ワード境界スキャン（プレースホルダー/予約 TLD ドメインを構造的に検出する `fabricated_url` を含む）。
   出典：SFD Lab 5 ステップチェックリスト、CDV（"'done, all tests pass' は主張であり
   証拠ではない"）、reze83 先検証ルール。
 - **`check_plugin_conformance`** — §5/§6/§7 の厳格 linter：閉じたトップレベル
   スキーマ、`name` 制約、SKILL.md frontmatter（ディレクトリ名一致、
   description ≤1024）、mcp.json の閉じたフィールドと cwd 形式。
 - **`sandbox_run`** — shell なしサブプロセス実行（タイムアウト 1–120 秒、出力
-  トランケート）。CDV チャネル A の実装。
+  トランケート）、任意の振る舞いアサーション（expected_exit / expect_output）
+  付き。CDV チャネル A の実装。
 - **`schema_validate`** — type/enum/const/minLength/maxLength/pattern/minItems/
   maxItems/items/properties/required/additionalProperties をサポートする
   ゼロ依存サブセット検証。
@@ -127,7 +129,7 @@ AgentSeed は「**コードレベル + 実ツール実行 + Skill/MCP クロー�
 | | プロンプト専用 skill（superpowers…） | 静的 import linter | **AgentSeed** |
 | --- | --- | --- | --- |
 | コードに触れる | ❌ | ✅ import グラフ | ✅ AST + 語彙解析 |
-| ツール実行 | ❌ | lint ゲート | ✅ sandbox 含む 9 MCP ツール |
+| ツール実行 | ❌ | lint ゲート | ✅ sandbox 含む 10 MCP ツール |
 | 強制 | 弱い | CI ゲート | **ハードゲート** |
 | 1.0.0 linter | ❌ | ❌ | ✅ |
 
@@ -197,7 +199,16 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' \
 判定の `blocking` フィールドはプロファイルの決定であり生スキャンでは
 ない。`status` は `pass` / `flagged` / `blocked` / `skipped`。
 
-### 10.3 エビデンスレシート（`engine/receipt.py`）
+### 10.3 検証カバレッジ（`engine/audit.py`）
+
+レシートは「検証したと主張するもの」を凍結する。カバレッジは「変更したが
+一度も検証していないファイル」を名指しする——自己認識幻覚クラスである。
+gate のカバレッジ段は `git status --porcelain` を
+`record_verification(files=...)` の記録と突き合わせ、欠落を列挙する。
+デフォルトは報告のみ、`--coverage-strict` で阻断。git ワークツリー外では
+偽グリーンではなく誠実な「計算不能」に劣化する。
+
+### 10.4 エビデンスレシート（`engine/receipt.py`）
 
 レシートは完了タスクの検証状態を凍結する：チェック項目（ツール + 判定）、
 検証済みファイルごとの SHA256 とサイズ、agentseed/python/プラットフォーム
@@ -206,7 +217,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize",...}' \
 指定されたファイルが存在しない場合、レシート全体が大音量で失敗する。
 完了報告が引用するのは散文ではなくこの成果物である。
 
-### 10.4 プラグインツールチェーン（`guard_cli plugin …`）
+### 10.5 プラグインツールチェーン（`guard_cli plugin …`）
 
 `init` は最小プラグインを足場生成し、本物の適合性チェッカで自己検査する——
 自前の linter を通れない足場はディスクに残さない。`validate` は linter を

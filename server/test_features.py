@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -95,6 +96,52 @@ class TestSandboxAllowPolicy(unittest.TestCase):
         # Cross-platform: actually runs on Linux/macOS too.
         r = engine.sandbox_run([sys.executable, "-c", "print('ok')"], allowed_prefixes=None)
         self.assertEqual(r["exit_code"], 0)
+
+
+class TestSandboxExpectations(unittest.TestCase):
+    """Behavioral assertions: 'the command ran' upgrades to 'it produced the
+    expected result' — executional verification without a second channel."""
+
+    def test_expectations_met(self):
+        r = engine.sandbox_run(
+            [sys.executable, "-c", "print('result-42')"],
+            expected_exit=0,
+            expect_output="result-42",
+        )
+        self.assertEqual(r["exit_code"], 0)
+        exp = r["expectations"]
+        self.assertTrue(exp["met"])
+        self.assertTrue(exp["exit_met"])
+        self.assertTrue(exp["output_met"])
+
+    def test_expect_exit_mismatch(self):
+        r = engine.sandbox_run(
+            [sys.executable, "-c", "raise SystemExit(3)"],
+            expected_exit=0,
+        )
+        self.assertEqual(r["exit_code"], 3)
+        self.assertFalse(r["expectations"]["met"])
+        self.assertFalse(r["expectations"]["exit_met"])
+        self.assertIsNone(r["expectations"]["output_met"])
+
+    def test_expect_output_matches_stderr(self):
+        r = engine.sandbox_run(
+            [sys.executable, "-c", "import sys; sys.stderr.write('boom-marker')"],
+            expect_output="boom-marker",
+        )
+        self.assertTrue(r["expectations"]["met"], r)
+
+    def test_expect_output_missing_fails(self):
+        r = engine.sandbox_run(
+            [sys.executable, "-c", "print('other')"],
+            expect_output="not-present-marker",
+        )
+        self.assertFalse(r["expectations"]["met"])
+        self.assertTrue(r["expectations"]["output_met"] is False)
+
+    def test_no_expectations_keeps_result_shape(self):
+        r = engine.sandbox_run([sys.executable, "-c", "print('plain')"])
+        self.assertNotIn("expectations", r)
 
 
 class TestSandboxAllowPolicyHardening(unittest.TestCase):
@@ -288,6 +335,53 @@ class TestAuditTrail(unittest.TestCase):
 
     def test_record_rejects_blank_task(self):
         self.assertFalse(engine.record_verification("  ", [])["ok"])
+
+
+class TestVerificationCoverage(unittest.TestCase):
+    """Evidence coverage: changed files vs recorded verifications. Closes the
+    self-awareness gap — a receipt freezes what you CLAIM to verify; coverage
+    names what you changed but never verified."""
+
+    @staticmethod
+    def _git_repo(d: str) -> None:
+        subprocess.run(
+            ["git", "init", "-q"], cwd=d, capture_output=True, text=True, timeout=60
+        )
+
+    def test_changed_vs_unverified(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._git_repo(d)
+            for name in ("a.py", "b.py"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                    fh.write("x = 1\n")
+            cov = engine.coverage(d)
+            self.assertTrue(cov["computable"])
+            self.assertEqual(sorted(cov["changed"]), ["a.py", "b.py"])
+            self.assertEqual(sorted(cov["unverified"]), ["a.py", "b.py"])
+            engine.record_verification(
+                "task", files=["a.py"], data_dir=os.path.join(d, ".agentseed")
+            )
+            cov2 = engine.coverage(d)
+            self.assertEqual(cov2["verified"], ["a.py"])
+            self.assertEqual(cov2["unverified"], ["b.py"])
+
+    def test_abs_path_record_matches_git_rel_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._git_repo(d)
+            with open(os.path.join(d, "a.py"), "w", encoding="utf-8") as fh:
+                fh.write("x = 1\n")
+            engine.record_verification(
+                "task", files=[os.path.join(d, "a.py")], data_dir=os.path.join(d, ".agentseed")
+            )
+            cov = engine.coverage(d)
+            self.assertEqual(cov["unverified"], [])
+            self.assertEqual(cov["verified"], ["a.py"])
+
+    def test_non_git_root_is_honestly_incomputable(self):
+        with tempfile.TemporaryDirectory() as d:
+            cov = engine.coverage(d)
+            self.assertFalse(cov["computable"])
+            self.assertIn("cannot be computed", cov["note"])
 
 
 class TestExampleFixtures(unittest.TestCase):

@@ -1,9 +1,10 @@
 """AgentSeed hallucination word scanning.
 
-Flags tokens across three signal groups:
-  - stub_code:     stub/mock/fake/placeholder/dummy/todo/...
-  - oversold:      guaranteed/"all tests pass"/"production ready"/...
-  - fabricated:    simulated/invented/fabricated/...
+Flags tokens across four signal groups:
+  - stub_code:      stub/mock/fake/placeholder/dummy/todo/...
+  - oversold:       guaranteed/"all tests pass"/"production ready"/...
+  - fabricated:     simulated/invented/fabricated/...
+  - fabricated_url: placeholder or reserved-TLD domains (phantom squatting)
 """
 
 from __future__ import annotations
@@ -71,6 +72,15 @@ OVERSOLD_TOKENS = [
     "cannot fail",
     "guaranteed to pass",
     "impossible to break",
+    # security claims (unverified)
+    "no vulnerabilities",
+    "vulnerability free",
+    "secure by design",
+    "unhackable",
+    # performance claims (unverified)
+    "highly optimized",
+    "zero downtime",
+    "infinitely scalable",
 ]
 
 OVERSOLD_TOKENS_ZH = [
@@ -86,6 +96,12 @@ OVERSOLD_TOKENS_ZH = [
     "不可能失败",
     "绝对可靠",
     "稳过",
+    "绝对安全",
+    "毫无漏洞",
+    "零漏洞",
+    "永不停机",
+    "超高性能",
+    "安全无虞",
 ]
 
 FABRICATED_TOKENS = [
@@ -108,12 +124,23 @@ FABRICATED_TOKENS_ZH = [
     "子虚乌有",
 ]
 
+# Placeholder domains are caught by the structural domain rules below
+# (_DOMAIN_RE + _is_fabricated_url), not by literal tokens; the EN literal
+# pool stays empty so config-driven extension keeps one uniform shape.
+FABRICATED_URL_TOKENS: list[str] = []
+
+FABRICATED_URL_TOKENS_ZH = [
+    "你的域名",
+    "示例域名",
+]
+
 # Full pool: token -> group (kept for backward compatibility).
 HALLUCINATION_WORDS: dict[str, str] = {}
 for _tokens, _group in [
     (STUB_TOKENS + STUB_TOKENS_ZH, "stub_code"),
     (OVERSOLD_TOKENS + OVERSOLD_TOKENS_ZH, "oversold"),
     (FABRICATED_TOKENS + FABRICATED_TOKENS_ZH, "fabricated"),
+    (FABRICATED_URL_TOKENS + FABRICATED_URL_TOKENS_ZH, "fabricated_url"),
 ]:
     for _t in _tokens:
         HALLUCINATION_WORDS[_t] = _group
@@ -122,6 +149,7 @@ _GROUP_LABELS = {
     "stub_code": "placeholder / not-really-done code",
     "oversold": "unverified confidence claim",
     "fabricated": "fabricated / invented content",
+    "fabricated_url": "placeholder / reserved-TLD domain (phantom squatting)",
 }
 
 # Tokens that are legitimate in common testing/idiomatic contexts.
@@ -143,6 +171,7 @@ DEFAULT_SEVERITIES: dict[str, str] = {
     "stub_code": "warning",
     "oversold": "error",
     "fabricated": "error",
+    "fabricated_url": "warning",
 }
 
 # ---------------------------------------------------------------------------
@@ -169,7 +198,71 @@ _HALLUCINATION_PATTERNS: list[tuple[re.Pattern, str]] = [
     (_compile_group(STUB_TOKENS + STUB_TOKENS_ZH), "stub_code"),
     (_compile_group(OVERSOLD_TOKENS + OVERSOLD_TOKENS_ZH), "oversold"),
     (_compile_group(FABRICATED_TOKENS + FABRICATED_TOKENS_ZH), "fabricated"),
+    (_compile_group(FABRICATED_URL_TOKENS + FABRICATED_URL_TOKENS_ZH), "fabricated_url"),
 ]
+
+# ---------------------------------------------------------------------------
+# Fabricated-domain detection (fabricated_url group).
+#
+# Lexical only, no network: a domain is flagged when it is a placeholder
+# stand-in ("api.yourdomain.com"), sits on an RFC/IANA-reserved TLD used as
+# if it were real ("myapp.test"), or fabricates the word "example" into a
+# domain that is NOT the reserved example.com/net/org/edu set
+# ("docs.example-fake-api.dev" — Unit 42's phantom squatting). Real domains
+# (github.com, docs.python.org) never match; the allowlist still applies.
+# ---------------------------------------------------------------------------
+
+_DOMAIN_RE = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}",
+    re.IGNORECASE,
+)
+
+# example.com/net/org (RFC 2606) and example.edu (IANA) are THE placeholder
+# convention — their exact domains and subdomains stay clean.
+_RESERVED_EXAMPLE_SUFFIXES = (".example.com", ".example.net", ".example.org", ".example.edu")
+
+_URL_PLACEHOLDER_MARKERS = (
+    "yourdomain",
+    "your-domain",
+    "yoursite",
+    "yourwebsite",
+    "yourapi",
+    "your-api",
+    "mydomain",
+    "mysite",
+    "mywebsite",
+    "fakedomain",
+    "fake-domain",
+    "testdomain",
+    "test-domain",
+    "sampledomain",
+    "sample-domain",
+    "dummydomain",
+    "dummy-domain",
+    "placeholder-domain",
+)
+
+_RESERVED_TLDS = {"test", "invalid", "localhost", "example"}
+
+
+def _is_fabricated_url(domain: str) -> bool:
+    host = domain.lower().rstrip(".")
+    if host.endswith(_RESERVED_EXAMPLE_SUFFIXES) or host in (
+        "example.com",
+        "example.net",
+        "example.org",
+        "example.edu",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+    ):
+        return False
+    tld = host.rsplit(".", 1)[-1]
+    if tld in _RESERVED_TLDS:
+        return True
+    if "example" in host:
+        return True
+    return any(marker in host for marker in _URL_PLACEHOLDER_MARKERS)
 
 
 def merge_allowlist(base: list[str] | None, extra: list[str] | None) -> list[str] | None:
@@ -200,6 +293,12 @@ def scan_hallucination_words(
       - the match is part of a dotted path (``unittest.mock``, ``os.path``);
       - the matched text starts with an entry of the effective allowlist.
 
+    Beyond the literal token pool, every non-import line also goes through a
+    fabricated-domain pass (group ``fabricated_url``): placeholder stand-ins,
+    reserved TLDs used as if real, and "example" fabricated into
+    non-reserved domains (phantom squatting). The reserved example.com/net/
+    org/edu set and the allowlist stay clean.
+
     ``extra_tokens`` extends the pool at runtime (config: ``extra_tokens``
     mapping group -> [words]); unknown groups are ignored.
 
@@ -213,7 +312,8 @@ def scan_hallucination_words(
                     "severity": "warning"}, ...],
           "clean": bool,
           "blocking": bool,
-          "groups": {"stub_code": 2, "oversold": 1, "fabricated": 0},
+          "groups": {"stub_code": 2, "oversold": 1, "fabricated": 0,
+                     "fabricated_url": 0},
           "severities": {"error": 1, "warning": 2, "info": 0}
         }
     """
@@ -260,6 +360,19 @@ def scan_hallucination_words(
                 hits.append({"word": word, "group": group, "line": i, "severity": severity})
                 group_counts[group] += 1
                 severity_counts[severity] += 1
+        for m in _DOMAIN_RE.finditer(line):
+            host = m.group(0)
+            if not _is_fabricated_url(host):
+                continue
+            rest = line[m.start() :]
+            if any(rest.lower().startswith(a.lower()) for a in allowlist):
+                continue
+            severity = sev.get("fabricated_url", "warning")
+            hits.append(
+                {"word": host.lower(), "group": "fabricated_url", "line": i, "severity": severity}
+            )
+            group_counts["fabricated_url"] += 1
+            severity_counts[severity] += 1
     return {
         "hits": hits,
         "clean": len(hits) == 0,

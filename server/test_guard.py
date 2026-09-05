@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import unittest
+from pathlib import Path
 
 import guard_engine as engine  # noqa: E402
 
@@ -450,6 +451,88 @@ class TestCheckImports(unittest.TestCase):
         self.assertTrue(r["imports_ok"])
         self.assertIn("python", r["note"])
 
+
+class TestCheckManifest(unittest.TestCase):
+    """Manifest scanning — the slopsquatting FIRST CONTACT surface."""
+
+    def test_requirements_flags_phantom_package(self):
+        text = "numpy==1.26.0\n# comment\nslopsquat-utils>=1.0\n--index-url https://pypi.org/simple\n"
+        r = engine.check_manifest(text, kind="requirements")
+        self.assertFalse(r["manifest_ok"])
+        self.assertEqual([s["package"] for s in r["suspicious"]], ["slopsquat-utils"])
+        self.assertEqual(r["dependencies_checked"], 2)
+
+    def test_requirements_normalizes_pypi_names(self):
+        text = "PyYAML==6.0\npython_dateutil>=2.8\npre_commit==3.0\n"
+        r = engine.check_manifest(text, kind="requirements")
+        self.assertTrue(r["manifest_ok"], r["suspicious"])
+
+    def test_requirements_known_packages_allowlist(self):
+        text = "mycompany-core==1.0\n"
+        r = engine.check_manifest(text, kind="requirements", known_packages=["mycompany_core"])
+        self.assertTrue(r["manifest_ok"])
+
+    def test_pyproject_pep621_flags_phantom(self):
+        text = (
+            "[project]\n"
+            'name = "app"\n'
+            "dependencies = [\n"
+            '    "requests>=2.0",\n'
+            '    "uvicorn[standard]>=0.20",\n'
+            '    "phantom-tomllib>=1.0",\n'
+            "]\n"
+        )
+        r = engine.check_manifest(text, kind="pyproject")
+        self.assertEqual([s["package"] for s in r["suspicious"]], ["phantom-tomllib"])
+        self.assertEqual(r["dependencies_checked"], 3)
+
+    def test_pyproject_poetry_section_flags_phantom(self):
+        text = (
+            "[tool.poetry.dependencies]\n"
+            'python = "^3.9"\n'
+            'requests = "^2.0"\n'
+            'ghost-poetry-pkg = "^1.0"\n'
+        )
+        r = engine.check_manifest(text, kind="pyproject")
+        self.assertEqual([s["package"] for s in r["suspicious"]], ["ghost-poetry-pkg"])
+
+    def test_package_json_flags_phantom(self):
+        text = (
+            '{\n  "name": "app",\n  "dependencies": {\n    "express": "^4.0",\n'
+            '    "@babel/core": "^7.0"\n  },\n  "devDependencies": {\n'
+            '    "phantom-npm-pkg": "^1.0"\n  }\n}\n'
+        )
+        r = engine.check_manifest(text, kind="package.json")
+        self.assertEqual([s["package"] for s in r["suspicious"]], ["phantom-npm-pkg"])
+        self.assertEqual(r["dependencies_checked"], 3)
+
+    def test_kind_inference_from_content(self):
+        r = engine.check_manifest('{"dependencies": {"express": "^4.0"}}')
+        self.assertEqual(r["kind"], "package.json")
+        self.assertTrue(r["manifest_ok"], r["suspicious"])
+        r2 = engine.check_manifest("[project]\ndependencies = [\n  \"requests>=2.0\",\n]\n")
+        self.assertEqual(r2["kind"], "pyproject")
+        r3 = engine.check_manifest("numpy==1.0\n")
+        self.assertEqual(r3["kind"], "requirements")
+
+    def test_unknown_kind_fails_loudly(self):
+        r = engine.check_manifest("whatever", kind="cargo")
+        self.assertFalse(r["manifest_ok"])
+        self.assertIn("unsupported", r["note"])
+
+    def test_preexisting_unknowns_are_not_suspects(self):
+        # long-tail unknowns the project itself already depends on are the
+        # project's own history; only NEWLY ADDED names are the hallucination
+        # moment (diff-scoped via the CLI's git-HEAD baseline)
+        text = "pytest-cov==5.0\ntrustme==1.1\nphantom-new-pkg>=1.0\n"
+        r = engine.check_manifest(
+            text, kind="requirements", preexisting=["pytest-cov", "trustme"]
+        )
+        self.assertEqual([s["package"] for s in r["suspicious"]], ["phantom-new-pkg"])
+        self.assertEqual(sorted(r["preexisting_unknown"]), ["pytest-cov", "trustme"])
+        self.assertFalse(r["manifest_ok"])
+        self.assertIn("Diff-scoped", r["note"])
+
     def test_new_research_tokens_flagged(self):
         # tokens added from 2025 research (slopsquatting + overclaim/fabrication)
         r = engine.scan_hallucination_words(
@@ -474,6 +557,23 @@ class TestHallucinationScan(unittest.TestCase):
         self.assertFalse(r["clean"])
         groups = {h["group"] for h in r["hits"]}
         self.assertIn("oversold", groups)
+
+    def test_oversold_security_and_performance_claims(self):
+        # unverified security/performance claims fire as oversold (error)
+        r = engine.scan_hallucination_words(
+            "No vulnerabilities, secure by design, zero downtime. 高并发下超高性能，绝对安全。"
+        )
+        self.assertFalse(r["clean"])
+        self.assertIn("oversold", {h["group"] for h in r["hits"]})
+        self.assertTrue(r["blocking"])
+
+    def test_oversold_security_legitimate_usage_clean(self):
+        # describing the act of hardening is not an unverified claim
+        r = engine.scan_hallucination_words(
+            "The design review fixed two issues; we optimized the query with an index.\n"
+            "Encrypt the token before storing it.\n"
+        )
+        self.assertTrue(r["clean"], r["hits"])
 
     def test_fabricated_group(self):
         r = engine.scan_hallucination_words("this is a simulated example")
@@ -531,6 +631,30 @@ class TestHallucinationScan(unittest.TestCase):
         self.assertFalse(r["clean"])
         self.assertFalse(r["blocking"])
 
+    def test_fabricated_url_group(self):
+        # phantom squatting: placeholder stand-ins, reserved TLDs, and
+        # "example" fabricated into non-reserved domains all fire
+        src = (
+            "docs: https://docs.example-fake-api.dev/v2\n"
+            "curl https://api.yourdomain.com/ping\n"
+            "endpoint = https://myapp.test/hook\n"
+            "部署到你的域名即可生效。\n"
+        )
+        r = engine.scan_hallucination_words(src)
+        url_hits = [h for h in r["hits"] if h["group"] == "fabricated_url"]
+        self.assertEqual(len(url_hits), 4, url_hits)
+        self.assertIn("fabricated_url", r["groups"])
+        self.assertFalse(r["blocking"])  # default severity is warning
+
+    def test_fabricated_url_reserved_and_real_domains_clean(self):
+        src = (
+            "clone https://github.com/Morningstar202604/AgentSeed\n"
+            "docs: https://example.com/a and https://example.net and https://example.org\n"
+            "https://docs.example.edu/guide and https://docs.python.org/3/\n"
+        )
+        r = engine.scan_hallucination_words(src)
+        self.assertTrue(r["clean"], r["hits"])
+
 
 class TestConformance(unittest.TestCase):
     def test_self_conformant(self):
@@ -543,8 +667,10 @@ class TestConformance(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             skill_dir = os.path.join(d, "skills", "demo-skill")
             os.makedirs(skill_dir)
-            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as fh:
-                fh.write("---\nname: demo-skill\ndescription: ok\n---\n\n---\nnot frontmatter\n")
+            Path(skill_dir, "SKILL.md").write_text(
+                "---\nname: demo-skill\ndescription: ok\n---\n\n---\nnot frontmatter\n",
+                encoding="utf-8",
+            )
             # body containing a '---' line must not corrupt the parse
             r = engine.check_plugin_conformance(d)
             self.assertEqual([e for e in r["errors"] if "demo-skill" in e], [], r["errors"])
@@ -553,21 +679,19 @@ class TestConformance(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "plugin.json"), "w", encoding="utf-8") as fh:
-                fh.write(
-                    '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",'
-                    '"name":"badplugin","repository":{"type":"git","url":"x"}}'
-                )
+            Path(d, "plugin.json").write_text(
+                '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",'
+                '"name":"badplugin","repository":{"type":"git","url":"x"}}',
+                encoding="utf-8",
+            )
             r = engine.check_plugin_conformance(d)
             self.assertFalse(r["ok"])
             self.assertTrue(any("repository" in e for e in r["errors"]))
 
     @staticmethod
     def _write_plugin(tmp, plugin_json, mcp_json):
-        with open(os.path.join(tmp, "plugin.json"), "w", encoding="utf-8") as fh:
-            fh.write(plugin_json)
-        with open(os.path.join(tmp, "mcp.json"), "w", encoding="utf-8") as fh:
-            fh.write(mcp_json)
+        Path(tmp, "plugin.json").write_text(plugin_json, encoding="utf-8")
+        Path(tmp, "mcp.json").write_text(mcp_json, encoding="utf-8")
 
     PJ = '{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"t"}'
     MJ = (

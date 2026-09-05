@@ -31,6 +31,7 @@ import time
 
 from .artifact import SKIP_DIRS
 from .symbols import defined_symbols, language_for_file, source_extensions
+from .version import plugin_version
 
 INDEX_SCHEMA = "agentseed.index.v1"
 
@@ -87,8 +88,9 @@ def index_path(root: str) -> str:
 def build_index(root: str) -> dict:
     """Build (or incrementally refresh) the symbol index for a project root.
 
-    Returns the index payload: {"schema", "entries": {path: {"hash",
-    "symbols": [...]}}, "stats": {"files", "cached", "rescanned", "elapsed_s"}}
+    Returns the index payload: {"schema", "engine_version", "entries":
+    {path: {"hash", "symbols": [...]}}, "stats": {"files", "cached",
+    "rescanned", "elapsed_s"}}
     """
     started = time.perf_counter()
     cache_file = index_path(root)
@@ -97,7 +99,13 @@ def build_index(root: str) -> dict:
         try:
             with open(cache_file, encoding="utf-8") as fh:
                 data = json.load(fh)
-            if data.get("schema") == INDEX_SCHEMA:
+            # a cache built by a different engine version may hold judgments
+            # from older collection rules — found in the field when the Go
+            # masking fix landed: stale v1 caches kept pre-fix symbol lists
+            if (
+                data.get("schema") == INDEX_SCHEMA
+                and data.get("engine_version") == plugin_version()
+            ):
                 old_entries = data.get("entries", {})
         except (OSError, ValueError):
             old_entries = {}
@@ -129,6 +137,7 @@ def build_index(root: str) -> dict:
 
     payload = {
         "schema": INDEX_SCHEMA,
+        "engine_version": plugin_version(),
         "entries": entries,
         "stats": {
             "files": n_files,
@@ -238,3 +247,70 @@ def index_payload_files(root: str) -> int:
             return len(json.load(fh).get("entries", {}))
     except (OSError, ValueError):
         return 0
+
+
+def resolve_symbols(
+    names: list[str],
+    root: str,
+    sym_map: dict[str, list[str]] | None = None,
+    known_packages: list[str] | None = None,
+) -> dict:
+    """Write-time prevention: do these names exist BEFORE the call is written?
+
+    verify_code/verify_file judge code after it is written; this query is the
+    complement — ask first, hallucinate never. A name is judged against:
+      1. the project symbol index (exists -> which files define it);
+      2. Python stdlib + the known-package set (importable without a
+         project definition);
+      3. nothing else — a name found nowhere is reported as a likely
+         hallucinated API, with did-you-mean suggestions from real symbols.
+    """
+    from .imports import _DEFAULT_COMMON, _pypi_normalize, _stdlib_modules
+
+    clean = []
+    seen = set()
+    for n in names if isinstance(names, list) else []:
+        if isinstance(n, str) and n.strip() and n.strip() not in seen:
+            seen.add(n.strip())
+            clean.append(n.strip())
+    if sym_map is None:
+        sym_map = symbol_map(load_or_build(root))
+    known = set(sym_map)
+
+    importable = set(_stdlib_modules()) | {_pypi_normalize(p) for p in _DEFAULT_COMMON}
+    for pkg in known_packages or []:
+        if isinstance(pkg, str) and pkg.strip():
+            importable.add(_pypi_normalize(pkg))
+
+    results = []
+    for name in clean:
+        if name in known:
+            results.append(
+                {
+                    "name": name,
+                    "exists": True,
+                    "defined_in": sym_map[name][:5],
+                    "stdlib_or_known_package": False,
+                    "suggestions": [],
+                }
+            )
+            continue
+        importable_hit = name in importable or _pypi_normalize(name) in importable
+        results.append(
+            {
+                "name": name,
+                "exists": False,
+                "defined_in": [],
+                "stdlib_or_known_package": importable_hit,
+                "suggestions": suggestions_for(name, known),
+            }
+        )
+    return {
+        "results": results,
+        "all_found": bool(results) and all(r["exists"] or r["stdlib_or_known_package"] for r in results),
+        "project_symbols": len(sym_map),
+        "note": "Write-time prevention: judged against the project symbol index and "
+        "the stdlib/known-package set only. A name found nowhere is a likely "
+        "hallucinated API — resolve it, import it, or drop the call before writing "
+        "the code. Attribute calls and dependency-internal symbols are not analyzed.",
+    }

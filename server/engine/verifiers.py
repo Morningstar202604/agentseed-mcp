@@ -2,10 +2,11 @@
 
 The built-in analyzers are zero-dependency lexical passes, deliberately
 weaker than the real tools a project already uses. An adapter runs the
-project's own toolchain (ruff, pyflakes, tsc, eslint, go vet, cargo check)
-through the same bounded execution channel as ``sandbox_run`` — no shell,
-capped output, tree-kill on timeout — and normalizes its undefined-name
-findings into the shape the built-in analyzer reports (``suspects``).
+project's own toolchain (ruff, pyflakes, mypy, tsc, eslint, go vet,
+cargo check, javac) through the same bounded execution channel as
+``sandbox_run`` — no shell, capped output, tree-kill on timeout — and
+normalizes its undefined-name findings into the shape the built-in
+analyzer reports (``suspects``).
 
 Policy, stated so nobody has to guess:
 
@@ -30,6 +31,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass
 
 from .index import find_project_root, verify_in_project
@@ -54,6 +56,13 @@ _CARGO_NAME_RE = re.compile(r"cannot find (?:value|function) `(\w+)`")
 _ESLINT_NAME_RE = re.compile(r"'([^']+)'\s+is not defined")
 # ruff phrases it as: Undefined name `foo` (backticks) — 'foo' in older builds
 _RUFF_NAME_RE = re.compile(r"Undefined name [`']([^`']+)[`']")
+# mypy: Name "foo" is not defined  [name-defined]  (legacy builds: 'foo')
+_MYPY_NAME_RE = re.compile(r"Name [\"']([^\"']+)[\"'] is not defined")
+_MYPY_CODE_RE = re.compile(r"\[([\w-]+)\]\s*$")
+_MYPY_LINE_RE = re.compile(r"^(.+?):(\d+):\s*error:\s*(.*)$")
+# javac: the name lives on the line AFTER "error: cannot find symbol"
+_JAVAC_LINE_RE = re.compile(r"^(.+?):(\d+):\s*error:\s*(.*)$")
+_JAVAC_SYMBOL_RE = re.compile(r"symbol:\s*(?:variable|method|class)\s+([\w$]+)")
 
 
 @dataclass(frozen=True)
@@ -75,6 +84,7 @@ class VerifierSpec:
     codes: tuple[str, ...] = ()  # undefined-name diagnostic codes
     package_mode: bool = False  # run on the project dir, ignore file args
     require_module: str | None = None
+    use_stderr: bool = False  # javac reports diagnostics on stderr, not stdout
 
 
 VERIFIERS: tuple[VerifierSpec, ...] = (
@@ -100,6 +110,14 @@ VERIFIERS: tuple[VerifierSpec, ...] = (
         args=("-m", "pyflakes"),
         parse="pyflakes-text",
         require_module="pyflakes",
+    ),
+    VerifierSpec(
+        name="mypy",
+        languages=("python",),
+        binary="mypy",
+        args=("--no-error-summary", "--hide-error-context", "--no-pretty"),
+        parse="mypy-text",
+        codes=("name-defined",),
     ),
     VerifierSpec(
         name="tsc",
@@ -139,6 +157,16 @@ VERIFIERS: tuple[VerifierSpec, ...] = (
         parse="cargo-json",
         codes=("E0425",),
         package_mode=True,
+    ),
+    VerifierSpec(
+        name="javac",
+        languages=("java",),
+        binary="javac",
+        # -d keeps .class side effects out of the user's tree; javac writes
+        # diagnostics to stderr, hence use_stderr
+        args=("-d", tempfile.gettempdir()),
+        parse="javac-text",
+        use_stderr=True,
     ),
 )
 
@@ -320,14 +348,85 @@ def _parse_eslint_json(out: str, codes: tuple[str, ...]) -> list[dict]:
     return findings
 
 
+def _parse_mypy_text(out: str, codes: tuple[str, ...]) -> list[dict]:
+    findings: list[dict] = []
+    for line in (out or "").splitlines():
+        m = _MYPY_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        message = m.group(3)
+        code_m = _MYPY_CODE_RE.search(message)
+        code = code_m.group(1) if code_m else "name-defined"
+        if codes and code not in codes:
+            continue
+        name = _MYPY_NAME_RE.search(message)
+        if not name:
+            continue
+        findings.append(
+            {
+                "file": m.group(1),
+                "line": int(m.group(2)),
+                "name": name.group(1),
+                "message": message,
+                "code": code,
+                "severity": "error",
+            }
+        )
+    return findings
+
+
+def _parse_javac_text(out: str, codes: tuple[str, ...]) -> list[dict]:
+    del codes
+    findings: list[dict] = []
+    lines = (out or "").splitlines()
+    for i, line in enumerate(lines):
+        m = _JAVAC_LINE_RE.match(line.strip())
+        if not m or m.group(3) != "cannot find symbol":
+            continue
+        name = ""
+        if i + 1 < len(lines):
+            sm = _JAVAC_SYMBOL_RE.search(lines[i + 1])
+            if sm:
+                name = sm.group(1)
+        findings.append(
+            {
+                "file": m.group(1),
+                "line": int(m.group(2)),
+                "name": name,
+                "message": m.group(3),
+                "severity": "error",
+            }
+        )
+    return findings
+
+
 _PARSERS = {
     "ruff-json": _parse_ruff_json,
     "pyflakes-text": _parse_pyflakes_text,
+    "mypy-text": _parse_mypy_text,
     "tsc-text": _parse_tsc_text,
     "govet-text": _parse_govet_text,
     "cargo-json": _parse_cargo_json,
     "eslint-json": _parse_eslint_json,
+    "javac-text": _parse_javac_text,
 }
+
+# One diagnostic-shaped line per text parser: what a tool that actually RAN
+# looks like even when it found no undefined names of our class.
+_DIAG_SHAPE = {
+    "pyflakes-text": re.compile(r"^.+?:\d+:"),
+    "mypy-text": _MYPY_LINE_RE,
+    "tsc-text": _TSC_LINE_RE,
+    "govet-text": _GOVET_LINE_RE,
+    "javac-text": _JAVAC_LINE_RE,
+}
+
+
+def _has_diagnostic_shape(out: str, parse_id: str) -> bool:
+    shape = _DIAG_SHAPE.get(parse_id)
+    if shape is None:  # JSON parsers: parseable JSON itself is the shape
+        return bool(out.strip())
+    return any(shape.match(line.strip()) for line in out.splitlines())
 
 
 def list_verifiers(language: str | None = None) -> list[dict]:
@@ -424,17 +523,35 @@ def _run_spec(spec: VerifierSpec, resolved: str, full: str, lang: str, timeout: 
             "engine": spec.name,
             "error": proc["stderr"] or f"{spec.name} failed to run (exit {proc['exit_code']})",
         }
-    # A tool that exits non-zero with nothing on stdout did not report
-    # findings — it failed to run (bad flags, bad project). Parsing that as
-    # "clean" would be a green light for a scan that never happened.
-    if not proc["stdout"].strip() and proc["exit_code"] != 0 and proc["stderr"].strip():
+    # A tool that exits non-zero with nothing on the diagnostics stream did
+    # not report findings — it failed to run (bad flags, bad project).
+    # Parsing that as "clean" would be a green light for a scan that never
+    # happened.
+    out = proc["stderr"] if spec.use_stderr else proc["stdout"]
+    other = proc["stdout"] if spec.use_stderr else proc["stderr"]
+    if not out.strip() and proc["exit_code"] != 0 and other.strip():
         return {
             "ok": False,
             "engine": spec.name,
             "error": f"{spec.name} produced no parseable output (exit "
-            f"{proc['exit_code']}): {proc['stderr'][:200]}",
+            f"{proc['exit_code']}): {other[:200]}",
         }
-    findings = _PARSERS[spec.parse](proc["stdout"], spec.codes)
+    findings = _PARSERS[spec.parse](out, spec.codes)
+    # Non-zero exit with zero extracted findings: a genuine run that reported
+    # only other diagnostic classes (e.g. a syntax error) shows at least one
+    # diagnostic-shaped line; a tool that failed to run (bad flags) shows
+    # prose instead. Reading prose as "clean" would be a fake green.
+    if (
+        proc["exit_code"] != 0
+        and not findings
+        and not _has_diagnostic_shape(out, spec.parse)
+    ):
+        return {
+            "ok": False,
+            "engine": spec.name,
+            "error": f"{spec.name} produced no parseable output (exit "
+            f"{proc['exit_code']}): {out[:200]}",
+        }
     suspects = _dedupe([f.get("name") for f in findings if f.get("name")])
     return {
         "ok": True,

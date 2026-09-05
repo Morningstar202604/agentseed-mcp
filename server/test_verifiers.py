@@ -169,5 +169,92 @@ class TestWindowsCmdShim(unittest.TestCase):
                 V.VERIFIERS = original
 
 
+class TestMypyJavacAdapters(unittest.TestCase):
+    """mypy joins the python auto-chain; javac covers java (stderr stream)."""
+
+    def test_mypy_parser_extracts_undefined_names(self):
+        out = (
+            'x.py:2: error: Name "magic_unknown" is not defined  [name-defined]\n'
+            'x.py:3: error: Name "ghost_two" is not defined  [name-defined]\n'
+            "x.py:4: error: Incompatible types in assignment  [assignment]\n"
+        )
+        findings = V._parse_mypy_text(out, ("name-defined",))
+        self.assertEqual([f["name"] for f in findings], ["magic_unknown", "ghost_two"])
+        self.assertEqual(findings[0]["line"], 2)
+        self.assertEqual(findings[0]["code"], "name-defined")
+
+    def test_mypy_parser_legacy_quote_style(self):
+        findings = V._parse_mypy_text(
+            "x.py:2: error: Name 'ghost' is not defined\n", ("name-defined",)
+        )
+        self.assertEqual([f["name"] for f in findings], ["ghost"])
+
+    def test_javac_parser_reads_symbol_line(self):
+        out = (
+            "App.java:5: error: cannot find symbol\n"
+            "  symbol:   variable magic_unknown\n"
+            "  location: class App\n"
+            "App.java:9: error: ';' expected\n"
+        )
+        findings = V._parse_javac_text(out, ())
+        self.assertEqual([f["name"] for f in findings], ["magic_unknown"])
+        self.assertEqual(findings[0]["line"], 5)
+        self.assertEqual(findings[0]["file"], "App.java")
+
+    def test_javac_runs_from_stderr_stream(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _write(
+                os.path.join(d, "javastandin.py"),
+                "import sys\n"
+                "sys.stderr.write('bad.java:5: error: cannot find symbol\\n"
+                "  symbol:   variable magic_unknown\\n')\nsys.exit(1)\n",
+            )
+            bad = _write(
+                os.path.join(d, "bad.java"), "class App { void m() { magic_unknown(); } }\n"
+            )
+            spec = V.VerifierSpec(
+                name="javastandin",
+                languages=("java",),
+                binary=sys.executable,
+                args=(script,),
+                parse="javac-text",
+                use_stderr=True,
+            )
+            original = V.VERIFIERS
+            V.VERIFIERS = (spec,)
+            try:
+                res = V.run_verifier(bad, engine="javastandin")
+                self.assertTrue(res["ok"], res)
+                self.assertEqual(res["suspects"], ["magic_unknown"])
+            finally:
+                V.VERIFIERS = original
+
+    def test_stderr_stream_tool_failure_still_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _write(
+                os.path.join(d, "brokenjava.py"),
+                "import sys\nsys.stderr.write('javac: invalid flag\\n')\nsys.exit(2)\n",
+            )
+            bad = _write(os.path.join(d, "bad.java"), "class App {}\n")
+            spec = V.VerifierSpec(
+                name="brokenjava",
+                languages=("java",),
+                binary=sys.executable,
+                args=(script,),
+                parse="javac-text",
+                use_stderr=True,
+            )
+            original = V.VERIFIERS
+            V.VERIFIERS = (spec,)
+            try:
+                # diagnostics stream (stderr) is empty of findings; the failure
+                # is on stdout — still "no parseable output", never a fake clean
+                res = V.run_verifier(bad, engine="brokenjava")
+                self.assertFalse(res["ok"])
+                self.assertIn("no parseable output", res["error"])
+            finally:
+                V.VERIFIERS = original
+
+
 if __name__ == "__main__":
     unittest.main()

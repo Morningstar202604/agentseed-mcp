@@ -11,7 +11,7 @@ AI 会编造不存在的 API，会不跑任何测试就说"全部通过"，会�
 在任务被标记为"完成"之前先验证代码，让"完成"= **可观测事实**，而非自说自话。
 
 [![License](https://img.shields.io/badge/license-PolyForm_NC_1.0.0-purple)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
 [![CI](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml)
 [![MCP server score](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed/badges/score.svg)](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Morningstar202604/AgentSeed)
@@ -88,7 +88,9 @@ $ scan_hallucination(source=...)
 判定是**测出来的，不是吹出来的**：在固定种子的合成语料上（5 类缺陷、
 100 个缺陷模块 + 40 个干净模块），AgentSeed 得分
 **precision 1.0 · recall 1.0**（tp=100, fp=0, fn=0）——并有回归测试锁定。
-方法与诚实边界见 [docs/BENCHMARK.md](./docs/BENCHMARK.md)。
+方法与诚实边界见 [docs/BENCHMARK.md](./docs/BENCHMARK.md)；真实仓库实测证据见
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)；日常使用指南（开场约束提示词、
+收尾验收、警告清单）见 [docs/USAGE.md](./docs/USAGE.md)。
 
 ## 闸门如何工作
 
@@ -154,6 +156,7 @@ workflow、跑第一次 gate 自举基线，并打印把客户端指向本插件
 ```bash
 python3 server/guard_cli.py suppress legacy_helper   # verify 不再标记（仍在 suppressed 中可见）
 python3 server/guard_cli.py allow works-on-my-machine # scan 不再报告（合并在内置默认之后）
+python3 server/guard_cli.py baseline audit           # 基线冻结了什么 + 复审闭环
 ```
 
 两者都原子写入你项目的 `agentseed.config.json`，且拒绝覆盖解析失败的配置。
@@ -178,7 +181,7 @@ python3 server/guard_cli.py scan . --baseline baseline-scan.json  # 目录扫描
 > `command` 是字符串，数组属于 `args`。用 `npx agentseed-mcp` 则完全不用改：
 > npm shim 会按平台自己挑解释器。
 
-## 9 个 MCP 工具
+## 10 个 MCP 工具
 
 零**必需**依赖——纯 Python 标准库；可选依赖把两个工具升级为行业标准引擎
 （见下）。
@@ -186,13 +189,14 @@ python3 server/guard_cli.py scan . --baseline baseline-scan.json  # 目录扫描
 | 工具 | 拦截什么 | 技术 |
 | --- | --- | --- |
 | `verify_code` | 编造的 API / 未定义符号 | Python AST + 配置驱动的通用词法扫描（17 语言） |
+| `resolve_symbol` | 写码**之前**拦截幻觉 API（写前预防） | 项目符号索引 + stdlib/known_packages 查询，附最接近真实符号建议 |
 | `check_contract` | 违反书面规范 | requires/prohibits 契约校验 |
-| `check_imports` | 幻觉包导入（slopsquatting 抢注） | stdlib + known_packages 白名单校验 |
-| `scan_hallucination` | 占位代码、夸大声称、虚构内容 | 3 组 28+ 信号，中英双语 |
+| `check_imports` | 幻觉包导入（slopsquatting 抢注） | stdlib + known_packages 白名单校验；`--manifest` 直接扫依赖清单并按 git 基线对比——只报“新增”的可疑包 |
+| `scan_hallucination` | 占位代码、夸大声称、虚构内容、幻觉域名 | 4 组 50+ 信号，中英双语 |
 | `check_plugin` | 不合规的插件打包 | 严格 1.0.0 linter |
-| `sandbox_run` | 什么都没跑就说"测试通过" | 确定性执行通道（有界内存输出） |
+| `sandbox_run` | 什么都没跑就说"测试通过"、跑了但结果不符声称 | 确定性执行通道 + 行为断言（expected_exit / expect_output） |
 | `schema_validate` | 不合法的结构化输出 | JSON Schema 校验 |
-| `record_verification` | 没有持久化证据链 | `PLUGIN_DATA` 下 JSONL 审计轨迹 |
+| `record_verification` | 没有持久化证据链、改了却没验证的文件 | `PLUGIN_DATA` 下 JSONL 审计轨迹；`files` 条目供 gate 覆盖率阶段使用 |
 
 ### 语言覆盖（诚实范围）
 
@@ -294,7 +298,7 @@ pip install -r server/requirements.txt
 | 宿主能力 | 得到什么 |
 | --- | --- |
 | 完整 Agent Plugins | 即插即用：skill + MCP 自动发现，`${PLUGIN_DATA}` 配置生效 |
-| 支持 MCP 的客户端 | 注册即得全部 9 个工具 |
+| 支持 MCP 的客户端 | 注册即得全部 10 个工具 |
 | 仅支持 skill 的客户端 | skill 流程；验证降级为 shell 调用 `guard_cli.py` |
 | 纯终端 / CI | 带退出码的 CLI 门禁 |
 
@@ -311,8 +315,8 @@ pip install -r server/requirements.txt
 | | 纯提示词护栏 skill | 静态 import linter（MCP） | **AgentSeed** |
 | --- | --- | --- | --- |
 | 触碰代码 | ❌ 仅提示 | ✅ import 图 | ✅ AST + 词法（17 语言） |
-| 跑验证工具 | ❌ | lint 门禁 | ✅ 9 个 MCP 工具含沙箱 |
-| 幻觉语言扫描 | ❌ | ❌ | ✅ stub/oversold/fabricated，中英双语 |
+| 跑验证工具 | ❌ | lint 门禁 | ✅ 10 个 MCP 工具含沙箱 |
+| 幻觉语言扫描 | ❌ | ❌ | ✅ stub/oversold/fabricated/fabricated_url，中英双语 |
 | 强制力 | 软（skill 文本） | CI 门禁 | **硬**：skill + MCP + hook + CLI 退出码 |
 | 1.0.0 合规 linter | ❌ | ❌ | ✅ 首个 |
 
