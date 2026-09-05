@@ -8,7 +8,7 @@ license: PolyForm-Noncommercial-1.0.0
 compatibility: MCP 服务器要求 Python 3.9+。零必需依赖；可选增强（jsonschema、pyflakes、pyyaml），未安装自动回退。
 metadata:
   author: AgentSeed
-  version: "0.6.0"
+  version: "0.6.1"
   spec: agent-plugins-1.0.0
 ---
 

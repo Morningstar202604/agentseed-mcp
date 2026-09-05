@@ -11,7 +11,7 @@ AI 会编造不存在的 API，会不跑任何测试就说"全部通过"，会�
 在任务被标记为"完成"之前先验证代码，让"完成"= **可观测事实**，而非自说自话。
 
 [![License](https://img.shields.io/badge/license-PolyForm_NC_1.0.0-purple)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
+[![Version](https://img.shields.io/badge/version-0.6.1-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
 [![CI](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml)
 [![MCP server score](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed/badges/score.svg)](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Morningstar202604/AgentSeed)
@@ -207,8 +207,6 @@ python3 server/guard_cli.py scan . --baseline baseline-scan.json  # 目录扫描
 | Go · Rust · Java · C · C++ · C# · PHP · Ruby · Kotlin · Swift | 配置驱动的通用词法扫描 |
 | Dart · Lua · R · Zig | 配置驱动的通用词法扫描 |
 | 任何其他语言 | 加一条 `LangSpec` 注册即可——无需改引擎 |
-
-诚实边界：属性调用（`obj.m()`）、宏、跨文件符号不分析；Ruby 无括号调用已支持。
 
 诚实边界：属性调用（`obj.m()`）、宏、跨文件符号不分析；Ruby 无括号调用已支持。
 
