@@ -94,7 +94,8 @@ $ scan_hallucination(source=...)
 欠陥 100 + クリーン 40 モジュール）で **precision 1.0 · recall 1.0**
 （tp=100, fp=0, fn=0）——回帰テストでロックイン済み。
 方法と正直な限界は [docs/BENCHMARK.md](./docs/BENCHMARK.md)。実リポジトリの検証証拠は
-[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。日々の使用ガイド
+（開始時の制約プロンプト、受け入れ、警告）は [docs/USAGE.md](./docs/USAGE.md)。
 
 ## ゲートの仕組み
 

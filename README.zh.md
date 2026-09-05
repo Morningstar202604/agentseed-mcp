@@ -89,7 +89,8 @@ $ scan_hallucination(source=...)
 100 个缺陷模块 + 40 个干净模块），AgentSeed 得分
 **precision 1.0 · recall 1.0**（tp=100, fp=0, fn=0）——并有回归测试锁定。
 方法与诚实边界见 [docs/BENCHMARK.md](./docs/BENCHMARK.md)；真实仓库实测证据见
-[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)；日常使用指南（开场约束提示词、
+收尾验收、警告清单）见 [docs/USAGE.md](./docs/USAGE.md)。
 
 ## 闸门如何工作
 

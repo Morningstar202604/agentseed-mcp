@@ -93,7 +93,8 @@ The verdict is **measured, not promised**: on a seeded synthetic corpus
 **precision 1.0 · recall 1.0** (tp=100, fp=0, fn=0) — locked in by a
 regression test. Methodology and honest limits:
 [docs/BENCHMARK.md](./docs/BENCHMARK.md). Real-repo field evidence:
-[docs/FIELD-TEST.md](./docs/FIELD-TEST.md).
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md). Daily-usage guide (opening
+prompt, acceptance, warnings): [docs/USAGE.md](./docs/USAGE.md).
 
 ## How the gate works
 
