@@ -3,6 +3,17 @@
 All notable changes to AgentSeed are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com); versioning follows [SemVer](https://semver.org).
 
+## [0.6.2] — 2026-09-06
+
+### Changed
+- **npm package README now carries the full install instructions** - the
+  npm install route (`npm install -g agentseed-mcp` / `npx
+  agentseed-mcp`) joins the release-download and clone routes in all
+  three quick starts, so the npmjs.com package page teaches every route.
+- Local gate artifacts (`baseline-scan.json`, `.mimosa/`) are gitignored.
+
+No engine changes; 0.6.1 functionality is identical.
+
 ## [0.6.1] — 2026-09-06
 
 ### Added
