@@ -62,11 +62,21 @@ class TestDocCountsAgreeWithEngine(unittest.TestCase):
         re.compile(NUMBER_WORDS + r"\s*MCP\s*(?:tools|工具|ツール)", re.I),
         re.compile(NUMBER_WORDS + r"\s*个\s*MCP\s*工具", re.I),
         re.compile(NUMBER_WORDS + r"\s*(?:tools|工具|ツール)\b", re.I),
+        # ja classifiers that slipped past the plain patterns: "8 つの MCP ツール"
+        re.compile(NUMBER_WORDS + r"\s*つの\s*MCP\s*ツール", re.I),
+        re.compile(NUMBER_WORDS + r"\s*個の\s*MCP\s*ツール", re.I),
+    ]
+    GROUP_PATTERNS = [
+        re.compile(NUMBER_WORDS + r"\s*(?:signal\s*)?groups?", re.I),
+        re.compile(NUMBER_WORDS + r"\s*组", re.I),
+        re.compile(NUMBER_WORDS + r"\s*グループ", re.I),
     ]
 
     def setUp(self):
         self.n_languages = len(canonical_languages())
         self.n_tools = len(TOOLS)
+        from engine.config import VALID_GROUPS
+        self.n_groups = len(VALID_GROUPS)
 
     def _claims(self, patterns, text, rel):
         out = []
@@ -103,6 +113,22 @@ class TestDocCountsAgreeWithEngine(unittest.TestCase):
             bad,
             [],
             f"tools/list exposes {self.n_tools} tools; docs disagree:\n" + "\n".join(bad),
+        )
+
+    def test_groups_count_match_engine(self):
+        bad = []
+        for rel in DOC_FILES:
+            for doc_rel, lineno, num, line in self._claims(self.GROUP_PATTERNS, _read(rel), rel):
+                text = line.lower()
+                if not any(k in text for k in ("mcp", "agentseed", "信号", "シグナル",
+                                               "signal", "scan", "工具", "ツール", "group")):
+                    continue
+                if num.rstrip("+") != str(self.n_groups):
+                    bad.append(f"{doc_rel}:{lineno}: claims {num!r} groups -> {line[:90]}")
+        self.assertEqual(
+            bad,
+            [],
+            f"engine exposes {self.n_groups} signal groups; docs disagree:\n" + "\n".join(bad),
         )
 
     def test_verify_code_advertises_the_registry_set(self):
