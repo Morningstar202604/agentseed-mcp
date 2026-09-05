@@ -1376,6 +1376,8 @@ def detect_undefined_symbols(
         for name, line in pyfindings:
             if name in defined or name in seen or line in noqa_lines:
                 continue
+            if re.fullmatch(r"__\w+__", name):
+                continue  # dunder protocol names: same skip as the AST pass
             seen.add(name)
             suspects.append(name)
             detail.append({"name": name, "line": line})
