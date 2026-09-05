@@ -12,7 +12,7 @@ AI は存在しない API を捏造し、何も実行せずに「テスト全部
 「完了」にします。「完了」= **観測された事実**であり、自己申告ではありません。
 
 [![License](https://img.shields.io/badge/license-PolyForm_NC_1.0.0-purple)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.6.1-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
+[![Version](https://img.shields.io/badge/version-0.6.2-blue)](https://github.com/Morningstar202604/AgentSeed/releases)
 [![CI](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/Morningstar202604/AgentSeed/actions/workflows/ci.yml)
 [![MCP server score](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed/badges/score.svg)](https://glama.ai/mcp/servers/Morningstar202604/AgentSeed)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Morningstar202604/AgentSeed)

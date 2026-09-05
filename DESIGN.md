@@ -99,13 +99,13 @@ AgentSeed fills: **code-level + real tooling + Skill/MCP closed-loop enforcement
 ## 4. MCP interface contract
 
 Transport: line-delimited JSON-RPC 2.0 over stdio. Server name `agentseed`,
-version `0.6.1`, protocol `2024-11-05`.
+version `0.6.2`, protocol `2024-11-05`.
 
 ### 4.1 `initialize` → result
 ```json
 { "protocolVersion": "2024-11-05",
   "capabilities": { "tools": {} },
-  "serverInfo": { "name": "agentseed", "version": "0.6.1" } }
+  "serverInfo": { "name": "agentseed", "version": "0.6.2" } }
 ```
 
 ### 4.2 `tools/list` → tools
