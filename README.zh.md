@@ -88,7 +88,8 @@ $ scan_hallucination(source=...)
 判定是**测出来的，不是吹出来的**：在固定种子的合成语料上（5 类缺陷、
 100 个缺陷模块 + 40 个干净模块），AgentSeed 得分
 **precision 1.0 · recall 1.0**（tp=100, fp=0, fn=0）——并有回归测试锁定。
-方法与诚实边界见 [docs/BENCHMARK.md](./docs/BENCHMARK.md)。
+方法与诚实边界见 [docs/BENCHMARK.md](./docs/BENCHMARK.md)；真实仓库实测证据见
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。
 
 ## 闸门如何工作
 

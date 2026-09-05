@@ -92,7 +92,8 @@ The verdict is **measured, not promised**: on a seeded synthetic corpus
 (5 defect classes, 100 defective + 40 clean modules) AgentSeed scores
 **precision 1.0 · recall 1.0** (tp=100, fp=0, fn=0) — locked in by a
 regression test. Methodology and honest limits:
-[docs/BENCHMARK.md](./docs/BENCHMARK.md).
+[docs/BENCHMARK.md](./docs/BENCHMARK.md). Real-repo field evidence:
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md).
 
 ## How the gate works
 

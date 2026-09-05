@@ -93,7 +93,8 @@ $ scan_hallucination(source=...)
 判定は**約束ではなく計測値**：シード固定の合成コーパス（5 欠陥クラス、
 欠陥 100 + クリーン 40 モジュール）で **precision 1.0 · recall 1.0**
 （tp=100, fp=0, fn=0）——回帰テストでロックイン済み。
-方法と正直な限界は [docs/BENCHMARK.md](./docs/BENCHMARK.md)。
+方法と正直な限界は [docs/BENCHMARK.md](./docs/BENCHMARK.md)。実リポジトリの検証証拠は
+[docs/FIELD-TEST.md](./docs/FIELD-TEST.md)。
 
 ## ゲートの仕組み
 
