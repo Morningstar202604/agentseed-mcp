@@ -70,7 +70,7 @@ AgentSeed 填补：**代码级 + 真跑工具 + Skill/MCP 闭环强制**。`chec
 
 ## 4. MCP 接口契约
 
-传输：基于 stdio 的逐行 JSON-RPC 2.0。服务器名 `agentseed`，版本 `0.6.2`，
+传输：基于 stdio 的逐行 JSON-RPC 2.0。服务器名 `agentseed`，版本 `0.6.3`，
 协议 `2024-11-05`。
 
 | 方法 | 说明 |

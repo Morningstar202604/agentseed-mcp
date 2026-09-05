@@ -9,7 +9,7 @@ license: PolyForm-Noncommercial-1.0.0
 compatibility: MCP サーバーは Python 3.9+ が必要。依存ゼロで動作；オプション（jsonschema、pyflakes、pyyaml）で精度向上、未インストール時は自動フォールバック。
 metadata:
   author: AgentSeed
-  version: "0.6.2"
+  version: "0.6.3"
   spec: agent-plugins-1.0.0
 ---
 

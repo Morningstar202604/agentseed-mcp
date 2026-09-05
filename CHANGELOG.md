@@ -3,6 +3,22 @@
 All notable changes to AgentSeed are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com); versioning follows [SemVer](https://semver.org).
 
+## [0.6.3] — 2026-09-06
+
+### Added
+- **`scripts/bump.py`** — one-command version bump across all twelve echo
+  sites (three manifests, three READMEs, three DESIGNs, three SKILL
+  frontmatters), with `--check` mode for release verification. Hand-editing
+  twelve spots was the recurring release chore this tool eliminates; this
+  release was bumped with it.
+
+### Changed
+- **docs-sync blind spots closed**: the signal-group count is now checked
+  across all six docs against the engine registry (the "3 グループ"/"3 组"
+  drift that shipped in 0.6.0 would have been caught), and the ja
+  classifier number forms ("N つの MCP ツール") join the tool-count
+  patterns ("8 つの" shipped as a stale heading for a full release).
+
 ## [0.6.2] — 2026-09-06
 
 ### Changed

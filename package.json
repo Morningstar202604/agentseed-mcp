@@ -1,6 +1,6 @@
 {
   "name": "agentseed-mcp",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "The anti-hallucination gate for AI coding agents: 10 MCP tools (undefined-symbol verification in 17 languages with real toolchain adapters, hallucination-word scan, sandboxed run, evidence receipts), a cross-client hook and a CI gate — so 'done' means observed fact.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "mcpName": "io.github.morningstar202604/agentseed-mcp",
